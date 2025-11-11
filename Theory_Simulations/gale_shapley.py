@@ -1,3 +1,4 @@
+from __future__ import annotations
 from heapq import heappop, heappush, heappushpop
 from pathlib import Path
 import numpy as np

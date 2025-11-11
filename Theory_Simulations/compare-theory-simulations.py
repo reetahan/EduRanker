@@ -470,10 +470,8 @@ def compare_theoretical_vs_simulation(
     
     plt.tight_layout()
     
-    # Save figure
-    os.makedirs('validation_output', exist_ok=True)
     var_str = f"_var_k_{k_dist}" if variable_k else ""
-    fname = f'validation_output/validation_phi{phi}_k{k_max}{var_str}_seed{seed}.png'
+    fname = f'output_plots/theory_gs_comparison_validation_phi{phi}_k{k_max}{var_str}_seed{seed}.png'
     plt.savefig(fname, dpi=300, bbox_inches='tight')
     print(f"✓ Saved: {fname}")
     plt.show()

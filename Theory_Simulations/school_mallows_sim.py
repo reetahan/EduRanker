@@ -780,8 +780,14 @@ def plot_effect_of_kstd(n=72000, m=533, c=156, k_max=12, phi=0.5,
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
-    suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=None)
-    fname = f'output_plots/effect_of_kstd_normal_k{suffix}.png'
+    # Build a filename-friendly token for the list of k_std values we swept
+    try:
+        kstd_tokens = [f"{float(s):.2f}".replace('.', 'p') for s in k_std_values]
+    except Exception:
+        kstd_tokens = [str(s).replace('.', 'p') for s in k_std_values]
+    kstd_part = "_".join(kstd_tokens)
+    suffix = _make_filename_suffix(seed=seed, k_dist=k_dist)
+    fname = f'output_plots/effect_of_kstd_normal_k_stds-{kstd_part}{suffix}.png'
     plt.tight_layout()
     save_figure(fname)
     print(f" Saved: {fname}")

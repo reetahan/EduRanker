@@ -1,6 +1,7 @@
 import time
 import argparse
 import multiprocessing as mp
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import binom
@@ -75,6 +76,44 @@ def _make_filename_suffix(seed=None, k_dist=None, k_std=None):
     if seed is not None:
         parts.append(f"seed-{int(seed)}")
     return ("_" + "_".join(parts)) if parts else ""
+
+
+def save_figure(fname):
+    """Save a matplotlib figure, creating parent directory if needed."""
+    d = os.path.dirname(fname)
+    if d and not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+    plt.savefig(fname, dpi=300, bbox_inches='tight')
+
+
+def _internal_test_normal_kstd():
+    """Internal quick test: for 'normal' k_dist, increasing k_std should increase spread.
+
+    This function raises AssertionError on failure so it can be used by CI or run
+    locally via the --self_test flag.
+    """
+    print("Running internal test: normal k-dist std behavior...")
+    k_max = 21
+    min_k = 1
+
+    small_std = 0.5
+    large_std = 5.0
+
+    k_vals_s, probs_s = generate_list_length_distribution(k_max, alpha=2.0, min_k=min_k, k_dist='normal', k_std=small_std)
+    k_vals_l, probs_l = generate_list_length_distribution(k_max, alpha=2.0, min_k=min_k, k_dist='normal', k_std=large_std)
+
+    # Probabilities should sum to ~1
+    assert abs(probs_s.sum() - 1.0) < 1e-12, f"small std probs sum = {probs_s.sum()}"
+    assert abs(probs_l.sum() - 1.0) < 1e-12, f"large std probs sum = {probs_l.sum()}"
+
+    mu = k_max / 2.0
+    var_s = np.sum(((k_vals_s - mu) ** 2) * probs_s)
+    var_l = np.sum(((k_vals_l - mu) ** 2) * probs_l)
+
+    assert var_s < var_l, f"Expected var({small_std}) < var({large_std}) but got {var_s} >= {var_l}"
+    assert probs_s.max() > probs_l.max(), "Expected peak probability to decrease with larger std"
+
+    print("Internal test passed: normal k-dist std behavior")
 
 # ==========================================
 # Step 1: Compute pi_r(phi, k) via sampling
@@ -313,7 +352,11 @@ def prob_unmatched_weighted(ell, pi_values, c, k):
     """Compute P(unmatched | ell) with weighted average"""
     rejection_probs = np.array([rejection_probability(ell, pi_r, c) 
                                  for pi_r in pi_values])
-    weighted_avg_rejection = np.sum(pi_values * rejection_probs) / np.sum(pi_values)
+    total_weight = np.sum(pi_values)
+    if total_weight == 0:
+        # No applications observed -> treat as everyone unmatched
+        return 1.0
+    weighted_avg_rejection = np.sum(pi_values * rejection_probs) / total_weight
     return weighted_avg_rejection ** k
 
 
@@ -422,7 +465,7 @@ def plot_effect_of_phi(n=72000, m=533, c=156, k=12, seed=None, k_dist=None, k_st
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/effect_of_phi_varied_k_rsm{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -483,7 +526,7 @@ def plot_effect_of_k(n=72000, m=533, c=156, phi=0.5, seed=None, k_dist=None, k_s
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/effect_of_k_varied_k_rsm{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -517,7 +560,7 @@ def plot_pi_r_distribution(phi_values=[0.0, 0.3, 0.5, 0.7, 1.0], k=12, m=533, se
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/pi_r_distribution_varied_k_rsm{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -572,7 +615,7 @@ def plot_effect_of_phi_variable(n=72000, m=533, c=156, k_max=12, alpha=2.0, min_
     
     ax1.set_xlabel('Lottery Number ℓ', fontsize=12)
     ax1.set_ylabel('P(unmatched | ℓ)', fontsize=12)
-    ax1.set_title(f'Effect of φ - Variable k (n={n}, m={m}, c={c}, k_max={k_max}, α={alpha})', fontsize=11)
+    ax1.set_title(f'Effect of φ - Variable k (n={n}, m={m}, c={c}, k_max={k_max}, α={alpha}, k_dist={k_dist})', fontsize=11)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
@@ -599,7 +642,7 @@ def plot_effect_of_phi_variable(n=72000, m=533, c=156, k_max=12, alpha=2.0, min_
     ax2.plot(phi_range, avg_unmatched, 'o-', linewidth=2, markersize=6)
     ax2.set_xlabel('φ (preference correlation)', fontsize=12)
     ax2.set_ylabel('Average P(unmatched)', fontsize=12)
-    ax2.set_title(f'Average Unmatched Probability vs φ\n(Variable k, α={alpha})', fontsize=12)
+    ax2.set_title(f'Average Unmatched Probability vs φ\n(Variable k, α={alpha}, k_dist={k_dist})', fontsize=12)
     ax2.grid(True, alpha=0.3)
     
     total_elapsed = time.time() - total_start
@@ -608,7 +651,7 @@ def plot_effect_of_phi_variable(n=72000, m=533, c=156, k_max=12, alpha=2.0, min_
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/effect_of_phi_variable_k_alpha{alpha}{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -649,7 +692,7 @@ def plot_effect_of_alpha(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist='power
     
     ax1.set_xlabel('Lottery Number ℓ', fontsize=12)
     ax1.set_ylabel('P(unmatched | ℓ)', fontsize=12)
-    ax1.set_title(f'Effect of Power Law Parameter α\n(φ={phi}, k_max={k_max})', fontsize=12)
+    ax1.set_title(f'Effect of Power Law Parameter α\n(n={n}, m={m}, c={c}, φ={phi}, k_max={k_max}, k_dist={k_dist})', fontsize=12)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
@@ -660,14 +703,87 @@ def plot_effect_of_alpha(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist='power
     
     ax2.set_xlabel('List Length k', fontsize=12)
     ax2.set_ylabel('Probability P(k)', fontsize=12)
-    ax2.set_title('List Length Distributions', fontsize=12)
+    ax2.set_title(f'List Length Distributions (k_max={k_max}, k_dist={k_dist})', fontsize=12)
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/effect_of_alpha_variable_k{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
+    print(f" Saved: {fname}")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_effect_of_kstd(n=72000, m=533, c=156, k_max=12, phi=0.5,
+                        k_dist='normal', k_std_values=None, seed=None, n_samples=1000, n_workers=8, show=False):
+    """Sweep k_std for the 'normal' k distribution and plot unmatched curves and k-distributions.
+
+    This mirrors the α experiment but varies the standard deviation of the
+    truncated-normal discrete distribution over list lengths.
+    """
+    if k_std_values is None:
+        k_std_values = [0.5, 1.0, 2.0, 4.0]
+
+    # Ensure we are working with the normal k distribution
+    if k_dist != 'normal':
+        print("Note: effect_kstd experiment requires k_dist='normal'. Overriding k_dist to 'normal'.")
+        k_dist = 'normal'
+
+    ell_range = np.linspace(1, n, 250, dtype=int)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    print(f"Starting k_std sweep (k_max={k_max}, φ={phi})...")
+
+    for k_std in tqdm(k_std_values, desc="Computing k_std curves"):
+        start = time.time()
+
+        # Compute list-length distribution for this k_std
+        k_vals, k_probs = generate_list_length_distribution(k_max, alpha=2.0, min_k=1, k_dist='normal', k_std=k_std)
+
+        # Compute pi_values under variable-k normal distribution
+        if phi < 0.05:
+            pi_vals = np.zeros(m)
+            for kk, kp in zip(k_vals, k_probs):
+                for r in range(1, min(int(kk) + 1, m+1)):
+                    pi_vals[r-1] += kp
+        elif phi > 0.95:
+            expected_k = np.sum(k_vals * k_probs)
+            pi_vals = np.full(m, expected_k / m)
+        else:
+            pi_vals = compute_pi(phi, k_max, m, n_samples=n_samples, n_workers=n_workers,
+                                 variable=True, alpha=2.0, min_k=1, k_dist='normal', k_std=k_std)
+
+        pi_values = normalize_pi(pi_vals)
+        probs = prob_unmatched_vectorized_variable(ell_range, pi_values, c, k_max, alpha=2.0, min_k=1, k_dist='normal', k_std=k_std)
+
+        ax1.plot(ell_range, probs, label=f'σ={k_std}', linewidth=2)
+
+        # Also show distribution over k on ax2
+        ax2.plot(k_vals, k_probs, 'o-', label=f'σ={k_std}', linewidth=2, markersize=5)
+
+        elapsed = time.time() - start
+        tqdm.write(f"   σ = {k_std} done in {elapsed:.1f}s")
+
+    ax1.set_xlabel('Lottery Number ℓ', fontsize=12)
+    ax1.set_ylabel('P(unmatched | ℓ)', fontsize=12)
+    ax1.set_title(f'Effect of normal k std (n={n}, m={m}, c={c}, φ={phi}, k_max={k_max})', fontsize=12)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2.set_xlabel('List Length k', fontsize=12)
+    ax2.set_ylabel('Probability P(k)', fontsize=12)
+    ax2.set_title(f'List Length Distributions (normal, varying σ, k_max={k_max})', fontsize=12)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=None)
+    fname = f'output_plots/effect_of_kstd_normal_k{suffix}.png'
+    plt.tight_layout()
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -698,7 +814,7 @@ def compare_fixed_vs_variable_k(n=72000, m=533, c=156, k_max=12, phi=0.5, alpha=
     
     ax.set_xlabel('Lottery Number ℓ', fontsize=12)
     ax.set_ylabel('P(unmatched | ℓ)', fontsize=12)
-    ax.set_title(f'Fixed vs Variable List Length Models\n(φ={phi}, k_max={k_max})', fontsize=13)
+    ax.set_title(f'Fixed vs Variable List Length Models\n(n={n}, m={m}, c={c}, φ={phi}, k_max={k_max}, k_dist={k_dist})', fontsize=13)
     ax.legend()
     ax.grid(True, alpha=0.3)
     
@@ -710,7 +826,7 @@ def compare_fixed_vs_variable_k(n=72000, m=533, c=156, k_max=12, phi=0.5, alpha=
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/fixed_vs_variable_k_comparison{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -766,14 +882,14 @@ def plot_fixed_vs_variable_over_phi(r=5, n=72000, m=533, c=156, k=12, k_max=12,
 
     ax.set_xlabel('Lottery Number ℓ', fontsize=12)
     ax.set_ylabel('P(unmatched | ℓ)', fontsize=12)
-    ax.set_title(f'Fixed vs Variable k across φ (r={r})', fontsize=13)
+    ax.set_title(f'Fixed vs Variable k across φ (r={r})\n(n={n}, m={m}, c={c}, k={k}, k_max={k_max}, α={alpha}, k_dist={k_dist})', fontsize=13)
     ax.legend(ncol=2, fontsize=9)
     ax.grid(True, alpha=0.3)
 
     suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
     fname = f'output_plots/fixed_vs_variable_over_phi{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -817,13 +933,13 @@ def plot_effect_of_components(y_values=[1,2,3,5,10], n=72000, m=533, c=156, k=12
     ax.plot(y_values, avg_unmatched_list, 'o-', linewidth=2)
     ax.set_xlabel('Number of mixture components y', fontsize=12)
     ax.set_ylabel('Average P(unmatched)', fontsize=12)
-    ax.set_title('Effect of number of Mallows components (y) on avg unmatched', fontsize=12)
+    ax.set_title(f'Effect of number of Mallows components (y) on avg unmatched\n(n={n}, m={m}, c={c}, k={k})', fontsize=12)
     ax.grid(True, alpha=0.3)
     # include random seed in filename if provided
     suffix = _make_filename_suffix(seed=random_seed)
     fname = f'output_plots/effect_of_components_y{suffix}.png'
     plt.tight_layout()
-    plt.savefig(fname, dpi=300, bbox_inches='tight')
+    save_figure(fname)
     print(f" Saved: {fname}")
     if show:
         plt.show()
@@ -843,13 +959,24 @@ if __name__ == "__main__":
     parser.add_argument('--n_workers', type=int, default=min(4, max(1, mp.cpu_count()-1)),
                         help='Number of worker processes for sampling (default: cpu_count-1, capped at 4)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
-    parser.add_argument('--k_dist', choices=['power_tail', 'centered_power', 'normal'], default='normal',
-                        help='Distribution for variable list length (default: normal)')
+    parser.add_argument('--k_dist', choices=['power_tail', 'centered_power', 'normal'], default='power_tail',
+                        help='Distribution for variable list length (default: power_tail)')
     parser.add_argument('--k_std', type=float, default=None, help='Std dev for normal k distribution (optional)')
     parser.add_argument('--show', action='store_true', help='Also display plots interactively (default: save only)')
+    parser.add_argument('--self_test', action='store_true', help='Run internal self tests and exit')
     args = parser.parse_args()
 
     np.random.seed(args.seed)
+
+    # Run internal self tests if requested and exit
+    if args.self_test:
+        try:
+            _internal_test_normal_kstd()
+            print("All internal self tests passed.")
+            exit(0)
+        except AssertionError as e:
+            print(f"Internal self test FAILED: {e}")
+            exit(2)
 
     # Helper to choose n_samples based on quick flag
     def choose_samples(default):
@@ -867,6 +994,7 @@ if __name__ == "__main__":
                                         alpha=2.0, n_samples=choose_samples(1000), n_workers=args.n_workers, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
     'effect_components': lambda: plot_effect_of_components(y_values=[1,2,3,5,10], n=72000, m=533, c=156, k=12,
                                n_samples=choose_samples(2000), n_workers=args.n_workers, random_seed=args.seed, show=args.show),
+    'effect_kstd': lambda: plot_effect_of_kstd(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist='normal', k_std_values=[0.5,1.0,2.0,4.0], seed=args.seed, n_samples=choose_samples(1000), n_workers=args.n_workers, show=args.show),
     }
 
     to_run = []

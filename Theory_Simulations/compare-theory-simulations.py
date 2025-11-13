@@ -246,6 +246,96 @@ def analyze_da_results(matches, student_info, n_students):
     }
 
 
+def compute_school_utilization(matches, school_capacities):
+    """Compute utilization per school given DA matches.
+
+    matches: dict student_id -> match_info (expects match_info['dbn'] or None)
+    school_capacities: dict school_dbn -> capacity (int)
+
+    Returns dict school_dbn -> utilization (assigned / capacity)
+    """
+    # Initialize counts
+    counts = {dbn: 0 for dbn in school_capacities.keys()}
+
+    # matches maps student_id -> {'dbn': ..., ...}
+    for sid, info in matches.items():
+        dbn = info.get('dbn') if isinstance(info, dict) else info
+        if dbn is None:
+            continue
+        if dbn not in counts:
+            counts[dbn] = counts.get(dbn, 0) + 1
+        else:
+            counts[dbn] += 1
+
+    util = {}
+    for dbn, cap in school_capacities.items():
+        cap_val = float(cap) if cap is not None and cap > 0 else 1.0
+        util[dbn] = counts.get(dbn, 0) / cap_val
+
+    return util
+
+
+def plot_school_utilization_cdf_across_runs(matches_list, school_capacities,
+                                             bins=100, fname=None, show=False):
+    """Plot mean cumulative utilization curve across multiple simulation runs.
+
+    matches_list: list of matches dicts (one per simulation)
+    school_capacities: dict dbn -> capacity
+    Returns: xs, mean_ys, std_ys
+    """
+    # Compute per-run utilization arrays
+    utils_per_run = []
+    for matches in matches_list:
+        util = compute_school_utilization(matches, school_capacities)
+        vals = np.array(list(util.values()), dtype=float)
+        utils_per_run.append(vals)
+
+    if not utils_per_run:
+        raise ValueError("No match runs provided to plot_school_utilization_cdf_across_runs")
+
+    utils_per_run = np.vstack(utils_per_run)  # shape (n_runs, n_schools)
+
+    # x grid
+    xmax = max(1.0, utils_per_run.max())
+    xs = np.linspace(0.0, xmax, bins)
+
+    # For each run compute the CDF-like curve: fraction of schools with util >= x
+    curves = []
+    for run_vals in utils_per_run:
+        curves.append([np.mean(run_vals >= x) for x in xs])
+    curves = np.array(curves)
+
+    mean_curve = curves.mean(axis=0)
+    std_curve = curves.std(axis=0)
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(xs, mean_curve, lw=2, label='Mean across runs')
+    ax.fill_between(xs, mean_curve - std_curve, mean_curve + std_curve, alpha=0.2,
+                    label='±1 std')
+    ax.set_xlim(0, xmax)
+    ax.set_ylim(0, 1.0)
+    ax.set_xlabel('Utilization (assigned / capacity)')
+    ax.set_ylabel('Fraction of schools with utilization ≥ x')
+    ax.set_title(f'School utilization CDF across runs (n_runs={len(matches_list)})')
+    ax.grid(alpha=0.3)
+    ax.legend()
+
+    if fname:
+        d = os.path.dirname(fname)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(fname, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved utilization plot: {fname}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+    return xs, mean_curve, std_curve
+
+
 def compare_theoretical_vs_simulation(
     n_students=10000,
     m_schools=533,
@@ -350,7 +440,9 @@ def compare_theoretical_vs_simulation(
         
         # Analyze results
         results = analyze_da_results(matches, student_info, n_students)
-        simulation_results.append(results)
+    # Keep matches with the analysis so we can compute utilizations later
+    results['matches'] = matches
+    simulation_results.append(results)
     
     # ============================================
     # PART 3: Compare Results
@@ -476,6 +568,17 @@ def compare_theoretical_vs_simulation(
     print(f"✓ Saved: {fname}")
     plt.show()
     
+    # ============================================
+    # Extra: school utilization across runs
+    # ============================================
+    try:
+        matches_list = [r['matches'] for r in simulation_results]
+        # Build capacities map consistent with generate_school_rankings_for_da
+        capacities = {f"School #{s}": capacity for s in range(m_schools)}
+        util_fname = f'output_plots/school_utilization_phi{phi}_k{k_max}_seed{seed}.png'
+        plot_school_utilization_cdf_across_runs(matches_list, capacities, bins=200, fname=util_fname, show=False)
+    except Exception as e:
+        print(f"Could not generate utilization plot: {e}")
     return {
         'theoretical_probs': theoretical_probs,
         'empirical_probs': empirical_probs,

@@ -433,7 +433,7 @@ def plot_effect_of_phi(n=72000, m=533, c=156, k=12, seed=None, k_dist=None, k_st
     
     ax1.set_xlabel('Lottery Number ℓ', fontsize=12)
     ax1.set_ylabel('P(unmatched | ℓ)', fontsize=12)
-    ax1.set_title(f'Effect of φ (n={n}, m={m}, c={c}, k<={k})', fontsize=13)
+    ax1.set_title(f'Effect of φ (n={n}, m={m}, c={c}, k={k})', fontsize=13)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     

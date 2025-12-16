@@ -163,7 +163,7 @@ def load_nyc_rankings_as_centers(aggregate_type='residential', data_dir=None):
 
 
 def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None, 
-                          n=72000, c=156, n_samples=2000, n_workers=4):
+                          n=72000, c=156, n_samples=500, n_workers=4):
     """
     Simulate NYC school choice with fixed k (no variable list lengths).
     Tests effect of varying k while keeping phi fixed.
@@ -174,7 +174,7 @@ def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None,
     - k_values: list of k values to test (default: [3, 6, 9, 12])
     - n: number of students
     - c: school capacity
-    - n_samples: samples for computing pi_r
+    - n_samples: samples for computing pi_r (default: 500, use 2000+ for higher accuracy)
     - n_workers: parallel workers
     
     Returns: dict with results for each k value
@@ -201,6 +201,7 @@ def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None,
         print(f"{'='*60}")
         
         # Compute pi_r using mixture
+        print("  Computing pi_r distribution...")
         pi_vals = compute_pi(
             phi=phi,
             k_or_kmax=k,
@@ -215,15 +216,17 @@ def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None,
         
         pi_vals = normalize_pi(pi_vals)
         
-        # Compute unmatched probabilities
-        ell_range = np.arange(1, n+1)
-        probs = prob_unmatched_vectorized(ell_range, pi_vals, c, k)
+        # Sample 10% of lottery numbers for speed
+        n_sample = max(1, n // 10)
+        ell_sample = np.linspace(1, n, n_sample, dtype=int)
+        probs_sample = prob_unmatched_vectorized(ell_sample, pi_vals, c, k)
         
         results[k] = {
             'pi_vals': pi_vals,
-            'unmatched_probs': probs,
-            'avg_unmatched': np.mean(probs),
-            'median_unmatched': np.median(probs)
+            'unmatched_probs_sample': probs_sample,
+            'ell_sample': ell_sample,
+            'avg_unmatched': np.mean(probs_sample),
+            'median_unmatched': np.median(probs_sample)
         }
         
         print(f"  Average P(unmatched): {results[k]['avg_unmatched']:.4f}")
@@ -497,7 +500,7 @@ def prob_unmatched_vectorized(ell_array, pi_values, c, k):
     Vectorized computation for multiple lottery numbers at once
     """
     results = []
-    for ell in ell_array:
+    for ell in tqdm(ell_array, desc="Computing unmatched probabilities", unit="lottery#"):
         results.append(prob_unmatched_weighted(ell, pi_values, c, k))
     return np.array(results)
 
@@ -1471,9 +1474,10 @@ if __name__ == "__main__":
     parser.add_argument('--aggregate_type', choices=['residential', 'language', 'zip'], default='residential',
                         help='Type of NYC rankings to use (default: residential)')
     parser.add_argument('--phi', type=float, default=0.8, help='Phi parameter for NYC simulation (default: 0.8)')
-    parser.add_argument('--k_values', type=str, default='3,6,9,12', help='Comma-separated k values to test (default: 3,6,9,12)')
+    parser.add_argument('--k_values', type=str, default='3,6,9,12,15,18', help='Comma-separated k values to test (default: 3,6,9,12,15,18)')
     parser.add_argument('--n', type=int, default=72000, help='Number of students (default: 72000)')
     parser.add_argument('--capacity', type=int, default=156, help='School capacity (default: 156)')
+    parser.add_argument('--n_samples_nyc', type=int, default=500, help='Number of samples for NYC pi_r computation (default: 500, use 2000+ for high accuracy)')
     
     args = parser.parse_args()
 
@@ -1493,7 +1497,7 @@ if __name__ == "__main__":
             k_values=k_vals,
             n=args.n,
             c=args.capacity,
-            n_samples=2000,
+            n_samples=args.n_samples_nyc,
             n_workers=args.n_workers
         )
         

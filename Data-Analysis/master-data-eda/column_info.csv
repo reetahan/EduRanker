@@ -1,0 +1,13 @@
+Column,Type,Non_Null_Count,Null_Count,Null_Percentage,Unique_Values
+School DBN,object,10272,0,0.0,422
+School Name,object,10272,0,0.0,422
+School District,int64,10272,0,0.0,32
+Residential District,int64,10272,0,0.0,32
+Total Applicants Residential District,int64,10272,0,0.0,535
+True Applicants Residential District,int64,10272,0,0.0,293
+Total Applicants School,int64,10272,0,0.0,367
+Total True Applicants School,int64,10272,0,0.0,276
+Seats Available School,int64,10272,0,0.0,154
+Offers School,int64,10272,0,0.0,199
+Ratio,float64,10272,0,0.0,1616
+Rank,int64,10272,0,0.0,183

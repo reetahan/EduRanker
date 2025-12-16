@@ -1,0 +1,362 @@
+Aggregate Type,Category,Number of Schools,Top School,Top School Ratio
+residential,1,236,University Heights Secondary School,1.0
+residential,2,340,Eagle Academy for Young Men of Harlem,1.0
+residential,3,305,Abraham Lincoln High School,1.0
+residential,4,308,Forest Hills High School,1.0
+residential,5,335,Bedford Academy High School,1.0
+residential,6,311,"Mathematics, Science Research and Technology Magnet High School",1.0
+residential,7,342,Academy of Hospitality and Tourism,1.0
+residential,8,374,Murry Bergtraum High School for Business Careers,1.0
+residential,9,375,Baccalaureate School for Global Education,1.0
+residential,10,364,FDNY - Captain Vernon A. Richard High School for Fire and Life Safety,1.0
+residential,11,360,All City Leadership Secondary School,1.0
+residential,12,352,"Health, Arts, Robotics, and Technology High School",1.0
+residential,13,266,"Facing History School, The",1.0
+residential,14,283,"Urban Assembly School of Design and Construction, The",1.0
+residential,15,276,"Facing History School, The",1.0
+residential,16,333,Young Women's Leadership School,1.0
+residential,17,327,Bard High School Early College Bronx,1.0
+residential,18,313,High School of Hospitality Management,1.0
+residential,19,374,Bronx Center for Science and Mathematics,1.0
+residential,20,283,Baccalaureate School for Global Education,1.0
+residential,21,258,East Side Community School,1.0
+residential,22,332,Lower East Side Preparatory High School,1.0
+residential,23,352,Rockaway Collegiate High School,1.0
+residential,24,345,Rockaway Park High School for Environmental Sustainability,1.0
+residential,25,303,Medgar Evers College Preparatory School,1.0
+residential,26,241,University Neighborhood High School,1.0
+residential,27,378,Ralph R. McKee Career and Technical Education High School,1.0
+residential,28,323,Manhattan Early College School for Advertising,1.0
+residential,29,333,East Side Community School,1.0
+residential,30,349,The High School for Climate Justice,1.0
+residential,31,267,Academy for Careers in Television and Film,1.0
+residential,32,302,Origins High School,1.0
+language,ARABIC,404,Origins High School,0.8518518518518519
+language,BANGLA,372,Townsend Harris High School,0.8237476808905381
+language,CANTONESE,222,Townsend Harris High School,0.7857142857142857
+language,CHINESE/ANY,307,Townsend Harris High School,0.8861985472154964
+language,ENGLISH,421,Townsend Harris High School,0.7061701549334058
+language,FRENCH,362,Bard High School Early College Queens,0.6923076923076923
+language,FRENCH-HAITIAN CREOLE,199,Clara Barton High School,0.55
+language,FULANI,231,Beacon High School,0.7272727272727273
+language,HEBREW,102,NYC iSchool,0.7777777777777778
+language,JAPANESE,143,Townsend Harris High School,0.9375
+language,KOREAN,124,Bard High School Early College,0.9230769230769232
+language,MANDARIN,311,Townsend Harris High School,0.8821138211382114
+language,PORTUGUESE,161,Townsend Harris High School,0.875
+language,RUSSIAN,295,"Queens School of Inquiry, The",0.75
+language,SPANISH,424,Manhattan Bridges High School,1.0
+language,AFRIKAANS,51,Staten Island Technical High School,0.0
+language,ALBANIAN,255,Townsend Harris High School,0.782608695652174
+language,AMHARIC (AKA ETHIOPIAN),23,University Neighborhood High School,1.0
+language,BAMBARA,121,Manhattan Center for Science and Mathematics,0.1666666666666666
+language,CHINESE-DIALECT UNKNOWN/OTHER,109,Leon M. Goldstein High School for the Sciences,0.7777777777777778
+language,DANISH,27,Staten Island Technical High School,0.0
+language,DARI/FARSI/PERSIAN,92,Francis Lewis High School,0.8571428571428571
+language,DZONGKHA,58,High School of American Studies at Lehman College,0.0
+language,GERMAN,76,Beacon High School,0.6153846153846154
+language,GREEK,101,Frank Sinatra School of the Arts High School,0.8571428571428571
+language,HAITIAN CREOLE,282,Townsend Harris High School,0.5
+language,HINDI,129,Townsend Harris High School,0.8666666666666667
+language,ITALIAN,137,Edward R. Murrow High School,0.75
+language,LATVIAN,16,University Neighborhood High School,1.0
+language,MANDINKA (AKA MANDINGO),168,Columbia Secondary School,0.1666666666666666
+language,NEPALI,138,Townsend Harris High School,0.8285714285714286
+language,PILIPINO (A.K.A. TAGALOG),173,Baruch College Campus High School,0.7777777777777778
+language,POLISH,188,Bard High School Early College Queens,0.7368421052631579
+language,PUNJABI (A.K.A. PANJABI),165,Beacon High School,0.8571428571428571
+language,QUICHE,21,University Neighborhood High School,1.0
+language,ROMANIAN,61,Queens Metropolitan High School,0.1666666666666666
+language,RUSSIAN-YIDDISH,37,Staten Island Technical High School,0.0
+language,SERBO-CROATIAN,88,Beacon High School,0.8461538461538461
+language,SWEDISH,55,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,TADZHIK (AKA TAJIK),119,Manhattan / Hunter Science High School,0.75
+language,TELUGU,25,Francis Lewis High School,0.1428571428571428
+language,THAI,67,Maspeth High School,0.1666666666666666
+language,TIBETAN,125,Bard High School Early College Queens,0.8333333333333334
+language,TURKISH,117,Bard High School Early College,1.0
+language,TWI,175,Manhattan / Hunter Science High School,0.9230769230769232
+language,UKRAINIAN,201,Baruch College Campus High School,0.75
+language,UNKNOWN,180,James Madison High School,0.7058823529411765
+language,URDU,286,"Young Women's Leadership School, Astoria",1.0
+language,UZBEK,153,International High School at LaGuardia Community College,0.8888888888888888
+language,WOLOF,148,Beacon High School,0.1666666666666666
+language,(AMERICAN) SIGN LANGUAGE,83,Staten Island Technical High School,0.0
+language,BENGALI,62,East Side Community School,1.0
+language,BOSNIAN,54,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,CZECH,25,Staten Island Technical High School,0.0
+language,FIJIAN,22,Staten Island Technical High School,0.0
+language,GEORGIAN,129,Leon M. Goldstein High School for the Sciences,0.5714285714285714
+language,HAUSA,115,Beacon High School,0.1666666666666666
+language,INDONESIAN (AKA BAHASA),62,Townsend Harris High School,0.8333333333333334
+language,MEXICAN SPANISH,33,East Side Community School,1.0
+language,SONINKE,179,Manhattan Center for Science and Mathematics,0.5
+language,SWAHILI (A.K.A. KISWAHILI),7,East Side Community School,1.0
+language,VIETNAMESE,117,Midwood High School,0.875
+language,AKAN,36,Staten Island Technical High School,0.0
+language,ARMENIAN,26,Midwood High School,0.1666666666666666
+language,BASQUE,20,Staten Island Technical High School,0.0
+language,BULGARIAN,57,Eleanor Roosevelt High School,0.1428571428571428
+language,BURMESE,99,James Madison High School,0.1666666666666666
+language,CHINESE/ANY-SPANISH,33,Midwood High School,0.1428571428571428
+language,EWE,95,Staten Island Technical High School,0.0
+language,FINNISH,21,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,GUJARATI,81,Townsend Harris High School,0.9166666666666666
+language,HUNGARIAN,67,Staten Island Technical High School,0.0
+language,IBO,74,Staten Island Technical High School,0.0
+language,MACEDONIAN,26,Staten Island Technical High School,0.0
+language,NIGER-CONGO,65,High School of American Studies at Lehman College,0.0
+language,PASHTO (A.K.A. PUSHTO),66,Townsend Harris High School,0.6666666666666666
+language,MALINKE,34,High School of American Studies at Lehman College,0.0
+language,SIDAMO,9,The Urban Assembly Early College High School for Emergency Medicine,1.0
+language,YORUBA,115,Midwood High School,0.1666666666666666
+language,AZERBAIJANI (AKA AZERI),6,The Clinton School,1.0
+language,DUTCH,49,High School of American Studies at Lehman College,0.0
+language,FRENCH-KHMER,31,The Clinton School,1.0
+language,GURMA,1,The Clinton School,1.0
+language,LITHUANIAN,13,Staten Island Technical High School,0.0
+language,SOMALI,11,The Clinton School,1.0
+language,Unknown,27,The Clinton School,1.0
+language,JAMAICAN-CREOLE,50,Staten Island Technical High School,0.0
+language,MONGOLIAN,11,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,CEBUAN,13,High School of American Studies at Lehman College,0.0
+language,NORWEGIAN,12,Essex Street Academy,1.0
+language,OSSETIAN,10,Essex Street Academy,1.0
+language,SLOVAK,45,"Facing History School, The",1.0
+language,TIGRINYA,15,High School of American Studies at Lehman College,0.0
+language,MALAYALAM,42,Martin Van Buren High School,0.1666666666666666
+language,MARATHI,12,Institute for Collaborative Education,1.0
+language,SLOVENIAN,6,Institute for Collaborative Education,1.0
+language,BIHARI,16,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,ARAUCANIAN,13,High School of American Studies at Lehman College,0.0
+language,TAMIL,36,Townsend Harris High School,0.1666666666666666
+language,VISAYAK (A.K.A. BISAYA),14,High School of American Studies at Lehman College,0.0
+language,LAO,1,School of the Future High School,1.0
+language,AFROASIATIC,10,Eleanor Roosevelt High School,1.0
+language,AMOY (A.K.A.FUKIENESE),26,Staten Island Technical High School,0.0
+language,FANTI (AKA FANTE),17,High School of American Studies at Lehman College,0.0
+language,ONEIDA,14,High School of American Studies at Lehman College,0.0
+language,CHINESE (SIMPLIFIED),37,Staten Island Technical High School,0.0
+language,MOSSI (AKA MORE),10,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,YONBA,12,Manhattan Village Academy,1.0
+language,TURKMAN (A.K.A TURKOMAN),21,Staten Island Technical High School,0.0
+language,SINHALESE,38,Port Richmond High School,0.1428571428571428
+language,VIETNAMESE-CHINESE,25,Staten Island Technical High School,0.0
+language,ESTONIAN,9,West End Secondary School,1.0
+language,MOLDAVIAN,2,Wadleigh Secondary School for the Performing & Visual Arts,1.0
+language,KAZAKH,11,Fiorello H. LaGuardia High School of Music & Art and Performing Arts,0.0
+language,MALAY,11,Manhattan Center for Science and Mathematics,1.0
+language,BRAHUI,2,Thurgood Marshall Academy for Learning and Social Change,1.0
+language,SAMOAN,9,The College Academy,1.0
+language,NAHUATL,9,A. Philip Randolph Campus High School,1.0
+language,SHLUH,4,South Bronx Preparatory: A College Board School,1.0
+language,KHMER (AKA CAMBOGE),10,High School of American Studies at Lehman College,0.0
+language,GUARANI,3,Bronx High School for Medical Science,1.0
+language,GA,9,Theatre Arts Production Company School,1.0
+language,ASSAMESE,1,Jonas Bronck Academy,1.0
+language,TEM (TEMBA/KOTOKOLI/COTOCOLI),1,Jonas Bronck Academy,1.0
+language,BALINESE,11,High School of American Studies at Lehman College,0.0
+language,KABYLE,12,High School of American Studies at Lehman College,0.0
+language,TIGRE,23,Pan American International High School at Monroe,1.0
+language,BELORUSSIAN,15,Staten Island Technical High School,0.0
+language,YIDDISH,1,Juan Morel Campos Secondary School,1.0
+language,QUECHUA,2,"The High School for Enterprise, Business and Technology",1.0
+language,SERI,3,Medgar Evers College Preparatory School,1.0
+language,STUDENT DOES NOT SPEAK,1,Urban Assembly School for Leadership and Empowerment,1.0
+language,TAMAZIGHT,4,Aviation Career & Technical Education High School,1.0
+language,SESOTHO,1,High School for Community Leadership,1.0
+language,BALANTE,1,"Young Women's Leadership School, Astoria",1.0
+language,SINDHI,7,The Eagle Academy for Young Men of Staten Island,1.0
+language,SENECA,2,Staten Island Technical High School,0.0
+language,KRIO,4,New Dorp High School,1.0
+zip,10001,140,Eleanor Roosevelt High School,0.6451612903225806
+zip,10002,216,Townsend Harris High School,0.8
+zip,10003,92,Eleanor Roosevelt High School,0.7906976744186046
+zip,10007,59,Eleanor Roosevelt High School,0.7058823529411765
+zip,10009,179,High School for Dual Language and Asian Studies,0.7
+zip,10012,79,Bard High School Early College,0.8666666666666667
+zip,10013,143,Townsend Harris High School,0.75
+zip,10014,71,Beacon High School,0.65625
+zip,10019,189,Bard High School Early College,0.7058823529411765
+zip,10023,175,Eleanor Roosevelt High School,0.6826923076923077
+zip,10024,168,Beacon High School,0.7112676056338029
+zip,10026,224,Bard High School Early College Bronx,0.8571428571428571
+zip,10027,273,Beacon High School,0.6509433962264151
+zip,10029,292,Esperanza Preparatory Academy,0.504950495049505
+zip,10030,230,Bard High School Early College,0.7894736842105263
+zip,10032,209,Beacon High School,0.6344086021505376
+zip,10035,235,Millennium High School,0.6
+zip,10036,173,Beacon High School,0.696969696969697
+zip,10037,207,Frank Sinatra School of the Arts High School,0.75
+zip,10038,122,Bard High School Early College,0.75
+zip,10128,140,Eleanor Roosevelt High School,0.7323943661971831
+zip,10304,151,Millennium High School,0.6666666666666666
+zip,10451,302,The Clinton School,0.5454545454545454
+zip,10452,311,Beacon High School,0.5294117647058824
+zip,10453,310,Beacon High School,0.5869565217391305
+zip,10455,269,Bard High School Early College,0.6666666666666666
+zip,10456,309,Beacon High School,0.5725806451612904
+zip,10458,301,"Urban Assembly School for Media Studies, The",0.75
+zip,10459,290,School of the Future High School,0.7777777777777778
+zip,10460,298,Townsend Harris High School,0.7142857142857143
+zip,10466,299,N.Y.C. Lab School for Collaborative Studies,0.5833333333333334
+zip,10469,290,Townsend Harris High School,0.7142857142857143
+zip,10470,208,Bard High School Early College,0.8181818181818182
+zip,10475,218,Manhattan / Hunter Science High School,0.6428571428571429
+zip,11106,194,Townsend Harris High School,0.7714285714285715
+zip,11201,195,Bard High School Early College Queens,0.7222222222222222
+zip,11203,256,Bard High School Early College,0.5428571428571428
+zip,11205,203,Bard High School Early College Queens,0.6666666666666666
+zip,11206,288,Bard High School Early College Queens,0.6071428571428571
+zip,11207,346,N.Y.C. Museum School,0.5454545454545454
+zip,11208,322,Townsend Harris High School,0.625
+zip,11211,175,Townsend Harris High School,0.8888888888888888
+zip,11214,177,Townsend Harris High School,0.7692307692307693
+zip,11215,199,Bard High School Early College,0.6263736263736264
+zip,11216,232,Townsend Harris High School,0.5833333333333334
+zip,11219,204,Manhattan / Hunter Science High School,0.6153846153846154
+zip,11220,216,CSI High School for International Studies,0.7777777777777778
+zip,11221,287,Columbia Secondary School,0.6
+zip,11222,162,Baccalaureate School for Global Education,0.9090909090909092
+zip,11223,182,Bard High School Early College,0.6153846153846154
+zip,11225,249,Bard High School Early College Queens,0.7777777777777778
+zip,11228,154,CSI High School for International Studies,0.75
+zip,11233,313,The Clinton School,0.5714285714285714
+zip,11239,235,Bard High School Early College,0.5454545454545454
+zip,11249,147,Frank Sinatra School of the Arts High School,0.631578947368421
+zip,11368,284,Townsend Harris High School,0.622895622895623
+zip,11369,225,Townsend Harris High School,0.6547619047619048
+zip,11373,275,Townsend Harris High School,0.7953020134228188
+zip,11378,211,Townsend Harris High School,0.7636363636363637
+zip,11385,283,East Side Community School,0.6666666666666666
+zip,11418,219,Beacon High School,0.7777777777777778
+zip,11421,251,Townsend Harris High School,0.7415730337078652
+zip,11434,259,Art and Design High School,0.6666666666666666
+zip,11692,228,Townsend Harris High School,0.6
+zip,10004,57,Eleanor Roosevelt High School,0.7142857142857143
+zip,10005,87,Eleanor Roosevelt High School,0.6666666666666666
+zip,10006,89,University Neighborhood High School,0.1666666666666666
+zip,10010,103,Institute for Collaborative Education,0.7857142857142857
+zip,10011,109,Townsend Harris High School,0.875
+zip,10016,155,Eleanor Roosevelt High School,0.7681159420289855
+zip,10017,129,Eleanor Roosevelt High School,0.85
+zip,10018,96,Manhattan / Hunter Science High School,0.6363636363636364
+zip,10021,91,Eleanor Roosevelt High School,0.8260869565217391
+zip,10022,68,Eleanor Roosevelt High School,0.8125
+zip,10025,200,Beacon High School,0.5699481865284974
+zip,10028,99,Bard High School Early College Queens,0.7857142857142857
+zip,10031,230,Bard High School Early College Queens,0.75
+zip,10033,232,Beacon High School,0.6703296703296703
+zip,10034,196,Bard High School Early College,0.7083333333333334
+zip,10039,265,Bard High School Early College,0.5555555555555556
+zip,10040,204,Beacon High School,0.6375
+zip,10044,116,Manhattan / Hunter Science High School,0.6666666666666666
+zip,10065,103,Eleanor Roosevelt High School,0.875
+zip,10069,52,Eleanor Roosevelt High School,0.7619047619047619
+zip,10075,77,Eleanor Roosevelt High School,0.746031746031746
+zip,10162,34,Millennium High School,0.75
+zip,10280,73,Beacon High School,0.6571428571428571
+zip,10282,60,Bard High School Early College,0.6
+zip,10301,160,The Michael J. Petrides School,0.5068493150684932
+zip,10303,105,CSI High School for International Studies,0.4516129032258064
+zip,10305,101,Leon M. Goldstein High School for the Sciences,0.5714285714285714
+zip,10310,94,Susan E. Wagner High School,0.4145299145299145
+zip,10312,93,Tottenville High School,0.6001926782273603
+zip,10454,291,Talent Unlimited High School,0.5833333333333334
+zip,10457,319,Beacon High School,0.5061728395061729
+zip,10461,281,Townsend Harris High School,0.7
+zip,10462,312,Townsend Harris High School,0.82
+zip,10463,236,In-Tech Academy (M.S. / High School 368),0.6987951807228916
+zip,10465,246,Townsend Harris High School,0.696969696969697
+zip,10467,317,Bard High School Early College Queens,0.6923076923076923
+zip,10468,275,Bard High School Early College Queens,0.75
+zip,10471,113,Riverdale / Kingsbridge Academy (Middle School / High School 141),0.8
+zip,10472,319,Townsend Harris High School,0.7555555555555555
+zip,10473,305,Townsend Harris High School,0.6842105263157895
+zip,10474,214,High School of World Cultures,0.75
+zip,11101,258,Townsend Harris High School,0.7567567567567568
+zip,11102,202,Bard High School Early College,0.6666666666666666
+zip,11103,155,Townsend Harris High School,0.7804878048780488
+zip,11104,155,Townsend Harris High School,0.7352941176470589
+zip,11105,171,Townsend Harris High School,0.7735849056603774
+zip,11109,73,Beacon High School,0.875
+zip,11204,177,Townsend Harris High School,0.6363636363636364
+zip,11209,168,Columbia Secondary School,0.875
+zip,11212,366,Frank Sinatra School of the Arts High School,0.4615384615384615
+zip,11213,269,NYC iSchool,0.5454545454545454
+zip,11217,176,Beacon High School,0.6805555555555556
+zip,11218,217,Columbia Secondary School,0.75
+zip,11224,187,Leon M. Goldstein High School for the Sciences,0.6666666666666666
+zip,11226,306,Columbia Secondary School,0.6875
+zip,11229,221,Scholars' Academy,0.7857142857142857
+zip,11230,212,International High School at Prospect Heights,0.6
+zip,11231,186,Beacon High School,0.6415094339622641
+zip,11232,176,Beacon High School,0.6451612903225806
+zip,11234,243,Beacon High School,0.7368421052631579
+zip,11235,199,Manhattan / Hunter Science High School,0.7083333333333334
+zip,11236,288,Urban Assembly Maker Academy,0.6
+zip,11237,245,Beacon High School,0.5882352941176471
+zip,11238,219,Bard High School Early College Queens,0.625
+zip,11354,138,Townsend Harris High School,0.808641975308642
+zip,11356,145,Townsend Harris High School,0.8217821782178217
+zip,11357,120,Townsend Harris High School,0.8296296296296296
+zip,11361,94,Baccalaureate School for Global Education,1.0
+zip,11365,145,Bard High School Early College,0.8888888888888888
+zip,11370,187,Art and Design High School,0.7037037037037037
+zip,11372,245,Townsend Harris High School,0.7307692307692307
+zip,11374,168,Townsend Harris High School,0.8285714285714286
+zip,11375,177,Townsend Harris High School,0.8442622950819673
+zip,11377,248,Townsend Harris High School,0.7604790419161677
+zip,11379,177,Townsend Harris High School,0.7647058823529411
+zip,11412,193,Bard High School Early College,0.8571428571428571
+zip,11413,205,Manhattan / Hunter Science High School,0.7
+zip,11416,205,Townsend Harris High School,0.7391304347826086
+zip,11417,206,Bard High School Early College,0.7647058823529411
+zip,11419,193,Manhattan / Hunter Science High School,0.7368421052631579
+zip,11420,206,Townsend Harris High School,0.6271186440677966
+zip,11429,147,Townsend Harris High School,0.7272727272727273
+zip,11432,181,Bard High School Early College,0.8888888888888888
+zip,11433,230,Townsend Harris High School,0.6271186440677966
+zip,11435,250,Frank Sinatra School of the Arts High School,0.6857142857142857
+zip,11436,169,Townsend Harris High School,0.6
+zip,11691,270,The High School of Fashion Industries,0.6666666666666666
+zip,11693,142,Scholars' Academy,0.6976744186046512
+zip,11414,164,Beacon High School,0.75
+zip,11426,113,Townsend Harris High School,0.8461538461538461
+zip,11694,119,Scholars' Academy,0.6842105263157895
+zip,11367,133,Townsend Harris High School,0.7575757575757576
+zip,11422,195,Bard High School Early College Queens,0.6
+zip,10302,70,Curtis High School,0.4536585365853658
+zip,10306,79,CSI High School for International Studies,0.5188679245283019
+zip,10314,103,CSI High School for International Studies,0.5920745920745921
+zip,10464,68,Herbert H. Lehman High School,0.5625
+zip,11001,41,Townsend Harris High School,0.8888888888888888
+zip,11004,66,Townsend Harris High School,0.803921568627451
+zip,11040,33,Townsend Harris High School,0.8333333333333334
+zip,11210,235,Midwood High School,0.5283018867924528
+zip,11355,156,Townsend Harris High School,0.8611111111111112
+zip,11358,112,Townsend Harris High School,0.8636363636363636
+zip,11362,92,Townsend Harris High School,0.9302325581395348
+zip,11363,59,Townsend Harris High School,0.9655172413793104
+zip,11364,109,Townsend Harris High School,0.8944723618090452
+zip,11366,82,Townsend Harris High School,0.7307692307692307
+zip,11415,141,Maspeth High School,0.8
+zip,11423,160,Eleanor Roosevelt High School,0.7777777777777778
+zip,11427,102,Townsend Harris High School,0.7692307692307693
+zip,11428,94,Townsend Harris High School,0.7924528301886793
+zip,11697,25,Scholars' Academy,0.9
+zip,Unknown,72,Staten Island Technical High School,0.0
+zip,10268,10,Food and Finance High School,1.0
+zip,10701,9,Food and Finance High School,1.0
+zip,11411,169,Townsend Harris High School,0.6486486486486487
+zip,10307,31,Tottenville High School,0.5708333333333333
+zip,10309,51,Tottenville High School,0.6143410852713178
+zip,10308,40,Tottenville High School,0.5428571428571428
+zip,11360,74,Townsend Harris High School,0.9310344827586208
+zip,10550,11,Talent Unlimited High School,1.0
+zip,10553,1,"Urban Assembly School for Applied Math and Science, The",1.0
+zip,10703,1,High School of American Studies at Lehman College,0.0
+zip,11389,3,Williamsburg Preparatory School,1.0
+zip,10281,1,The Boerum Hill School for International Studies,1.0
+zip,11430,15,Multicultural High School,1.0
+zip,11010,1,"Queens School of Inquiry, The",1.0

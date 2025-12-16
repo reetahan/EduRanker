@@ -2,6 +2,8 @@ import time
 import argparse
 import multiprocessing as mp
 import os
+import json
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import binom
@@ -119,6 +121,115 @@ def _internal_test_normal_kstd():
     assert probs_s.max() > probs_l.max(), "Expected peak probability to decrease with larger std"
 
     print("Internal test passed: normal k-dist std behavior")
+
+# ==========================================
+# NYC School Data: Load Rankings as Centers
+# ==========================================
+
+def load_nyc_rankings_as_centers(aggregate_type='residential', data_dir=None):
+    """
+    Load NYC school rankings and convert to integer-indexed centers for Mallows mixture.
+    
+    Returns: (centers, categories, m) where centers is list of integer rankings
+    """
+    if data_dir is None:
+        script_dir = Path(__file__).parent
+        data_dir = script_dir / ".." / "Data-Analysis" / "output" / "mallows_rankings"
+    else:
+        data_dir = Path(data_dir)
+    
+    json_file = data_dir / f"{aggregate_type}_rankings.json"
+    with open(json_file, 'r') as f:
+        rankings_data = json.load(f)
+    
+    centers = []
+    categories = []
+    all_schools = set()
+    
+    for entry in rankings_data:
+        categories.append(entry['category'])
+        centers.append(entry['ranking'])
+        all_schools.update(entry['ranking'])
+    
+    # Map DBNs to 1-indexed integers
+    school_to_idx = {dbn: idx + 1 for idx, dbn in enumerate(sorted(all_schools))}
+    m = len(all_schools)
+    
+    # Convert centers to integer indices
+    centers_indexed = [[school_to_idx[dbn] for dbn in center] for center in centers]
+    
+    print(f"Loaded {len(centers)} {aggregate_type} rankings, {m} schools total")
+    return centers_indexed, categories, m
+
+
+def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None, 
+                          n=72000, c=156, n_samples=2000, n_workers=4):
+    """
+    Simulate NYC school choice with fixed k (no variable list lengths).
+    Tests effect of varying k while keeping phi fixed.
+    
+    Parameters:
+    - aggregate_type: 'residential', 'language', or 'zip'
+    - phi: fixed Mallows phi parameter
+    - k_values: list of k values to test (default: [3, 6, 9, 12])
+    - n: number of students
+    - c: school capacity
+    - n_samples: samples for computing pi_r
+    - n_workers: parallel workers
+    
+    Returns: dict with results for each k value
+    """
+    if k_values is None:
+        k_values = [3, 6, 9, 12]
+    
+    # Load NYC rankings as mixture centers
+    centers, categories, m = load_nyc_rankings_as_centers(aggregate_type)
+    
+    # Create equal-weight mixture (one component per district/language/zip)
+    n_components = len(centers)
+    mixture_phis = [phi] * n_components
+    mixture_weights = [1.0 / n_components] * n_components
+    
+    print(f"\nSimulating with {n_components} components, phi={phi}")
+    print(f"Testing k values: {k_values}")
+    
+    results = {}
+    
+    for k in k_values:
+        print(f"\n{'='*60}")
+        print(f"Running simulation for k={k}")
+        print(f"{'='*60}")
+        
+        # Compute pi_r using mixture
+        pi_vals = compute_pi(
+            phi=phi,
+            k_or_kmax=k,
+            m=m,
+            n_samples=n_samples,
+            n_workers=n_workers,
+            variable=False,
+            mixture_phis=mixture_phis,
+            mixture_weights=mixture_weights,
+            mixture_centers=centers
+        )
+        
+        pi_vals = normalize_pi(pi_vals)
+        
+        # Compute unmatched probabilities
+        ell_range = np.arange(1, n+1)
+        probs = prob_unmatched_vectorized(ell_range, pi_vals, c, k)
+        
+        results[k] = {
+            'pi_vals': pi_vals,
+            'unmatched_probs': probs,
+            'avg_unmatched': np.mean(probs),
+            'median_unmatched': np.median(probs)
+        }
+        
+        print(f"  Average P(unmatched): {results[k]['avg_unmatched']:.4f}")
+        print(f"  Median P(unmatched): {results[k]['median_unmatched']:.4f}")
+    
+    return results, m, categories
 
 # ==========================================
 # Step 1: Compute pi_r(phi, k) via sampling
@@ -1354,9 +1465,51 @@ if __name__ == "__main__":
     parser.add_argument('--mixture_phis', type=str, default=None, help='Comma-separated list of phi values for mixture components (overrides auto-generation)')
     parser.add_argument('--mixture_weights', type=str, default=None, help='Comma-separated mixing weights for components (must match mixture_phis or mixture_y)')
     parser.add_argument('--mixture_centers_random', action='store_true', help='If set, generate random centers for each mixture component')
+    
+    # NYC simulation arguments
+    parser.add_argument('--nyc_sim', action='store_true', help='Run NYC school choice simulation with real rankings')
+    parser.add_argument('--aggregate_type', choices=['residential', 'language', 'zip'], default='residential',
+                        help='Type of NYC rankings to use (default: residential)')
+    parser.add_argument('--phi', type=float, default=0.8, help='Phi parameter for NYC simulation (default: 0.8)')
+    parser.add_argument('--k_values', type=str, default='3,6,9,12', help='Comma-separated k values to test (default: 3,6,9,12)')
+    parser.add_argument('--n', type=int, default=72000, help='Number of students (default: 72000)')
+    parser.add_argument('--capacity', type=int, default=156, help='School capacity (default: 156)')
+    
     args = parser.parse_args()
 
     np.random.seed(args.seed)
+    
+    # NYC simulation mode
+    if args.nyc_sim:
+        print("="*80)
+        print("NYC SCHOOL CHOICE SIMULATION")
+        print("="*80)
+        
+        k_vals = [int(k) for k in args.k_values.split(',')]
+        
+        results, m, categories = simulate_nyc_fixed_k(
+            aggregate_type=args.aggregate_type,
+            phi=args.phi,
+            k_values=k_vals,
+            n=args.n,
+            c=args.capacity,
+            n_samples=2000,
+            n_workers=args.n_workers
+        )
+        
+        print("\n" + "="*80)
+        print("SUMMARY OF RESULTS")
+        print("="*80)
+        print(f"Aggregate type: {args.aggregate_type}")
+        print(f"Phi: {args.phi}")
+        print(f"Number of schools (m): {m}")
+        print(f"Number of components: {len(categories)}")
+        print(f"\nResults by k:")
+        for k in k_vals:
+            print(f"  k={k:2d}: avg unmatched = {results[k]['avg_unmatched']:.4f}, "
+                  f"median unmatched = {results[k]['median_unmatched']:.4f}")
+        
+        exit(0)
 
     # Configure global mixture settings if requested
     if args.mixture_y and args.mixture_y > 0:

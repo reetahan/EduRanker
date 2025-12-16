@@ -8,6 +8,11 @@ from scipy.stats import binom
 from tqdm import tqdm
 from multiprocessing import Pool
 
+# Global mixture configuration (can be set from CLI in __main__)
+GLOBAL_MIXTURE_PHIS = None
+GLOBAL_MIXTURE_WEIGHTS = None
+# If GLOBAL_MIXTURE_CENTERS is the string 'random' we'll generate random centers on-demand
+GLOBAL_MIXTURE_CENTERS = None
 # ==========================================
 # Variable List Length Distribution
 # ==========================================
@@ -274,6 +279,22 @@ def compute_pi(phi, k_or_kmax, m, n_samples=2000, n_workers=4, variable=False,
     """
     is_mixture = mixture_phis is not None
 
+    # If user set global mixture configuration via CLI, use it when explicit
+    # mixture args are not provided. This lets the rest of the code call
+    # compute_pi(...) unchanged while enabling a mixture model globally.
+    global GLOBAL_MIXTURE_PHIS, GLOBAL_MIXTURE_WEIGHTS, GLOBAL_MIXTURE_CENTERS
+    if not is_mixture and GLOBAL_MIXTURE_PHIS is not None:
+        mixture_phis = GLOBAL_MIXTURE_PHIS
+        mixture_weights = GLOBAL_MIXTURE_WEIGHTS
+        mixture_centers = GLOBAL_MIXTURE_CENTERS
+        is_mixture = True
+
+    # If mixture centers are requested as 'random' (global flag), lazily
+    # generate random center permutations consistent with m.
+    if is_mixture and mixture_centers == 'random':
+        rng = np.random
+        mixture_centers = [rng.permutation(np.arange(1, m+1)).tolist() for _ in range(len(mixture_phis))]
+
     if not variable:
         k_fixed = int(k_or_kmax)
     else:
@@ -393,6 +414,181 @@ def prob_unmatched_vectorized_variable(ell_array, pi_values, c, k_max, alpha=2.0
     results = []
     for ell in ell_array:
         results.append(prob_unmatched_variable_k(ell, pi_values, c, k_max, alpha, min_k, k_dist=k_dist, k_std=k_std))
+    return np.array(results)
+
+
+# ==========================================
+# Monte-Carlo estimator (Option A)
+# ==========================================
+def prob_unmatched_mc_single(ell, pi_values, c, k, m=None, phi=None, center=None, n_mc=5000, reuse_samples=None):
+    """
+    Monte-Carlo estimate of P(unmatched | ell, k) by sampling top-k lists from
+    the Mallows RSM sampler `sample_mallows_top_k_rsm` and averaging the product
+    of per-school rejection probabilities.
+
+    Parameters:
+    - ell: lottery number (int)
+    - pi_values: length-m array of application probabilities (normalized)
+    - c: capacity
+    - k: list length
+    - m: number of schools (required if reuse_samples is None)
+    - phi, center: passed to `sample_mallows_top_k_rsm` for sampling
+    - n_mc: number of MC draws
+    - reuse_samples: optional array shape (n_mc, k) of sampled top-k indices (1-based)
+    """
+    pi_values = np.asarray(pi_values)
+    m_local = m if m is not None else len(pi_values)
+
+    # Prepare sampled sets
+    if reuse_samples is None:
+        samples = np.zeros((n_mc, int(k)), dtype=int)
+        for t in range(n_mc):
+            if phi is None:
+                # Fallback: sample uniformly without replacement using pi as weights
+                # convert pi to probabilities for selection without replacement
+                probs = pi_values / pi_values.sum() if pi_values.sum() > 0 else None
+                # use numpy choice without replacement
+                if probs is None:
+                    samples[t] = np.random.choice(np.arange(1, m_local+1), size=int(k), replace=False)
+                else:
+                    samples[t] = np.random.choice(np.arange(1, m_local+1), size=int(k), replace=False, p=probs)
+            else:
+                samples[t] = sample_mallows_top_k_rsm(m_local, phi, int(k), center=center)
+    else:
+        samples = np.asarray(reuse_samples, dtype=int)
+
+    # For each sampled top-k set, simulate earlier applicants jointly via multinomial
+    # and check whether all schools in the set have at least c earlier applicants.
+    indicators = np.zeros(samples.shape[0], dtype=float)
+    n_prev = max(0, int(ell) - 1)
+    if n_prev == 0:
+        # If no previous applicants, nobody is rejected
+        return 0.0, 0.0, samples
+
+    # Precompute probability vector for multinomial sampling
+    probs = pi_values / pi_values.sum() if pi_values.sum() > 0 else np.ones_like(pi_values) / len(pi_values)
+
+    # Draw multinomial counts for all MC samples in one vectorized call
+    try:
+        counts = np.random.multinomial(n_prev, probs, size=samples.shape[0])
+    except Exception:
+        # Fallback to per-sample draws if vectorized call not supported
+        counts = np.array([np.random.multinomial(n_prev, probs) for _ in range(samples.shape[0])])
+
+    # For each sampled top-k set, check if all chosen schools have counts >= c
+    # samples is shape (n_mc, k); convert to 0-based and index counts
+    idx = samples - 1  # shape (n_mc, k)
+    # Use advanced indexing: counts[np.arange(n_mc)[:,None], idx] -> shape (n_mc, k)
+    n_mc = samples.shape[0]
+    rows = np.arange(n_mc)[:, None]
+    chosen_counts = counts[rows, idx]
+    indicators = np.all(chosen_counts >= c, axis=1).astype(float)
+
+    mean_ind = float(np.mean(indicators))
+    stderr = float(np.std(indicators) / np.sqrt(len(indicators))) if len(indicators) > 0 else 0.0
+    return mean_ind, stderr, samples
+
+
+def prob_unmatched_vectorized_mc(ell_array, pi_values, c, k, m=None, phi=None, center=None, n_mc=5000, n_workers=1):
+    """
+    Vectorized Monte-Carlo estimator for multiple lottery numbers. Samples
+    top-k lists once (per call) and reuses them across ell values to amortize cost.
+    Returns array of estimates matching ell_array.
+    """
+    # Pre-sample top-k sets
+    mean_estimates = []
+    _, _, samples = prob_unmatched_mc_single(ell=1, pi_values=pi_values, c=c, k=k, m=m, phi=phi, center=center, n_mc=n_mc, reuse_samples=None)
+    # Now compute products for each ell using the same samples
+    samples = np.asarray(samples, dtype=int)
+    for ell in ell_array:
+        # Use the fast per-ell MC routine reusing the same sampled top-k sets
+        mean_ind, stderr, _ = prob_unmatched_mc_single(ell, pi_values, c, k, m=m, phi=phi, center=center, n_mc=n_mc, reuse_samples=samples)
+        mean_estimates.append(float(mean_ind))
+    return np.array(mean_estimates)
+
+
+def prob_unmatched_vectorized_variable_mc(ell_array, pi_values, c, k_max, alpha=2.0, min_k=1, k_dist='power_tail', k_std=None, n_mc=5000, m=None, phi=None, center=None):
+    """
+    Variable-k Monte-Carlo estimator: compute P(unmatched | ell) by mixing
+    MC estimates computed per k with P(k).
+    """
+    k_values, k_probs = generate_list_length_distribution(k_max, alpha, min_k, k_dist=k_dist, k_std=k_std)
+    # For each k with non-negligible probability compute MC estimate and mix
+    estimates_per_k = {}
+    for k, k_prob in zip(k_values, k_probs):
+        if k_prob <= 0:
+            continue
+        ests = prob_unmatched_vectorized_mc(ell_array, pi_values, c, int(k), m=m, phi=phi, center=center, n_mc=n_mc)
+        estimates_per_k[int(k)] = ests * k_prob
+
+    # Sum weighted estimates across k
+    total = np.zeros_like(ell_array, dtype=float)
+    for est in estimates_per_k.values():
+        total += est
+    return total
+
+
+# ==========================================
+# DA-based Monte-Carlo estimator
+# ==========================================
+def prob_unmatched_mc_da_single(ell, c, k, m, phi, center=None, n_mc=1000):
+    """
+    Monte-Carlo estimator that simulates the DA process among the ell-1 earlier
+    students to determine whether a focal student with lottery ell and a sampled
+    top-k list would be rejected by all k schools.
+
+    This explicitly samples earlier students' top-k lists and runs a greedy
+    acceptance process (students in random order propose to their ranked schools
+    until accepted or exhausted). Returns (mean, stderr).
+    """
+    n_prev = max(0, int(ell) - 1)
+    if n_prev == 0:
+        return 0.0, 0.0
+
+    rng = np.random.default_rng()
+
+    indicators = []
+    for _ in range(n_mc):
+        # sample focal student's list
+        focal = sample_mallows_top_k_rsm(m, phi, k, center=center)
+
+        # sample n_prev earlier students' lists
+        earlier_lists = [sample_mallows_top_k_rsm(m, phi, k, center=center) for __ in range(n_prev)]
+
+        # capacities copy
+        caps = np.full(m, c, dtype=int)
+
+        # process earlier students in a random order (their relative lotteries)
+        order = rng.permutation(n_prev)
+        for idx in order:
+            lst = earlier_lists[idx]
+            accepted = False
+            for s in lst:
+                s_idx = int(s) - 1
+                if caps[s_idx] > 0:
+                    caps[s_idx] -= 1
+                    accepted = True
+                    break
+            # if not accepted, they exhaust list
+
+        # after processing earlier students, check whether all focal schools are full
+        focal_idx = focal - 1
+        all_full = all(caps[i] <= 0 for i in focal_idx)
+        indicators.append(1.0 if all_full else 0.0)
+
+    arr = np.array(indicators)
+    return float(arr.mean()), float(arr.std() / np.sqrt(len(arr)))
+
+
+def prob_unmatched_vectorized_mc_da(ell_array, c, k, m, phi, center=None, n_mc=500):
+    """
+    Vectorized wrapper for DA-based MC estimator. Runs `prob_unmatched_mc_da_single`
+    for each ell in ell_array. This is expensive; choose small n_mc for large ell.
+    """
+    results = []
+    for ell in ell_array:
+        mean, stderr = prob_unmatched_mc_da_single(ell, c, k, m, phi, center=center, n_mc=n_mc)
+        results.append(mean)
     return np.array(results)
 
 # ==========================================
@@ -553,7 +749,7 @@ def plot_pi_r_distribution(phi_values=[0.0, 0.3, 0.5, 0.7, 1.0], k=12, m=533, se
     
     ax.set_xlabel('School Rank r in σ*', fontsize=12)
     ax.set_ylabel('πᵣ(φ, k) = P(rank r in top-k)', fontsize=12)
-    ax.set_title(f'Application Probability vs School Rank (k<={k}, m={m})', fontsize=13)
+    ax.set_title(f'Application Probability vs School Rank (k={k}, m={m})', fontsize=13)
     ax.legend()
     ax.grid(True, alpha=0.3)
     
@@ -902,6 +1098,190 @@ def plot_fixed_vs_variable_over_phi(r=5, n=72000, m=533, c=156, k=12, k_max=12,
     else:
         plt.close()
 
+def plot_school_utilization(n=72000, m=533, c=156, k=12, phi=0.5,
+                           variable_k=False, alpha=2.0, k_dist='power_tail', 
+                           k_std=None, n_samples=1000, n_workers=4, 
+                           seed=None, show=False):
+    """
+    Plot cumulative distribution of school utilization rates.
+    
+    Shows: What percentage of schools have at least X% utilization?
+    Utilization = (expected students assigned) / capacity
+    """
+    print(f"Computing school utilization (φ={phi}, k={k}, variable_k={variable_k})...")
+    
+    # Compute pi_r distribution
+    if variable_k:
+        pi_vals = compute_pi(phi, k, m, n_samples=n_samples, n_workers=n_workers,
+                            variable=True, alpha=alpha, min_k=1, 
+                            k_dist=k_dist, k_std=k_std)
+        # Adjust k to expected value for calculations
+        k_vals, k_probs = generate_list_length_distribution(
+            k, alpha, min_k=1, k_dist=k_dist, k_std=k_std
+        )
+        k_effective = np.sum(k_vals * k_probs)
+    else:
+        pi_vals = compute_pi(phi, k, m, n_samples=n_samples, 
+                            n_workers=n_workers, variable=False)
+        k_effective = k
+    
+    pi_vals = normalize_pi(pi_vals)
+    
+    # Estimate school utilization
+    # Expected applications per school
+    total_apps = n * k_effective
+    expected_apps_per_school = pi_vals * total_apps
+    
+    # Fill counts: min of (expected applications, capacity)
+    # This is optimistic - assumes perfect matching
+    fill_counts = np.minimum(expected_apps_per_school, c)
+    
+    # Utilization rate per school
+    utilization = fill_counts / c
+    
+    # Sort utilization rates (descending for cumulative plot)
+    sorted_util = np.sort(utilization)[::-1]
+    
+    # Create cumulative distribution
+    util_thresholds = np.linspace(0, 1, 101)  # 0%, 1%, ..., 100%
+    cumulative_counts = np.array([
+        np.sum(sorted_util >= threshold) for threshold in util_thresholds
+    ])
+    cumulative_fraction = cumulative_counts / m  # Fraction of schools
+    
+    # Create plots
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    # Plot 1: Cumulative distribution (main plot you wanted)
+    ax = axes[0]
+    ax.plot(util_thresholds * 100, cumulative_fraction * 100, 
+            linewidth=3, color='#2196F3')
+    ax.fill_between(util_thresholds * 100, 0, cumulative_fraction * 100, 
+                    alpha=0.3, color='#2196F3')
+    ax.set_xlabel('Minimum Utilization Rate (%)', fontsize=12)
+    ax.set_ylabel('Schools with ≥ X% Utilization (%)', fontsize=12)
+    ax.set_title(f'Cumulative School Utilization\n(φ={phi}, k={k}, var_k={variable_k})', 
+                fontsize=13)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    
+    # Add reference lines
+    ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5, label='50% of schools')
+    ax.axvline(x=80, color='red', linestyle='--', alpha=0.5, label='80% utilization')
+    ax.legend(fontsize=9)
+    
+    # Plot 2: Histogram of utilization rates
+    ax = axes[1]
+    ax.hist(utilization * 100, bins=30, edgecolor='black', alpha=0.7, color='#FF9800')
+    ax.axvline(np.mean(utilization) * 100, color='red', linestyle='--', 
+               linewidth=2, label=f'Mean: {np.mean(utilization)*100:.1f}%')
+    ax.axvline(np.median(utilization) * 100, color='green', linestyle='--',
+               linewidth=2, label=f'Median: {np.median(utilization)*100:.1f}%')
+    ax.set_xlabel('Utilization Rate (%)', fontsize=12)
+    ax.set_ylabel('Number of Schools', fontsize=12)
+    ax.set_title('Distribution of School Utilization', fontsize=13)
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    
+    plt.tight_layout()
+    
+    # Save figure
+    suffix = _make_filename_suffix(seed=seed, k_dist=k_dist, k_std=k_std)
+    var_str = f"_var_k" if variable_k else ""
+    fname = f'output_plots/school_utilization_phi{phi}_k{k}{var_str}{suffix}.png'
+    save_figure(fname)
+    print(f"✓ Saved: {fname}")
+    
+    if show:
+        plt.show()
+    else:
+        plt.close()
+    
+    return utilization, fill_counts
+
+def plot_utilization_vs_phi(phi_values=[0.3, 0.5, 0.7], n=72000, m=533, c=156, k=12,
+                           variable_k=False, alpha=2.0, k_dist='power_tail',
+                           n_samples=1000, n_workers=4, seed=None, show=False):
+    """
+    Compare school utilization across different phi values.
+    Shows how preference concentration affects capacity utilization.
+    """
+    print(f"Comparing utilization across φ values...")
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    utilization_data = {}
+    
+    for phi in tqdm(phi_values, desc="Computing utilization for φ"):
+        # Compute pi_r
+        if variable_k:
+            pi_vals = compute_pi(phi, k, m, n_samples=n_samples, n_workers=n_workers,
+                                variable=True, alpha=alpha, min_k=1, k_dist=k_dist)
+            k_vals, k_probs = generate_list_length_distribution(k, alpha, min_k=1, k_dist=k_dist)
+            k_effective = np.sum(k_vals * k_probs)
+        else:
+            pi_vals = compute_pi(phi, k, m, n_samples=n_samples, 
+                                n_workers=n_workers, variable=False)
+            k_effective = k
+        
+        pi_vals = normalize_pi(pi_vals)
+        
+        # Estimate utilization
+        expected_apps = pi_vals * n * k_effective
+        fill_counts = np.minimum(expected_apps, c)
+        utilization = fill_counts / c
+        
+        utilization_data[phi] = utilization
+        
+        # Sort and create cumulative
+        sorted_util = np.sort(utilization)[::-1]
+        util_thresholds = np.linspace(0, 1, 101)
+        cumulative_fraction = np.array([
+            np.sum(sorted_util >= t) / m for t in util_thresholds
+        ])
+        
+        # Plot 1: Cumulative curves
+        axes[0].plot(util_thresholds * 100, cumulative_fraction * 100,
+                    linewidth=2, label=f'φ = {phi}')
+    
+    axes[0].set_xlabel('Minimum Utilization Rate (%)', fontsize=12)
+    axes[0].set_ylabel('Schools with ≥ X% Utilization (%)', fontsize=12)
+    axes[0].set_title(f'School Utilization vs Preference Concentration\n(n={n}, m={m}, c={c}, k={k})', 
+                     fontsize=13)
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_xlim(0, 100)
+    axes[0].set_ylim(0, 100)
+    
+    # Plot 2: Mean utilization vs phi
+    phi_plot = list(utilization_data.keys())
+    mean_utils = [np.mean(utilization_data[p]) * 100 for p in phi_plot]
+    std_utils = [np.std(utilization_data[p]) * 100 for p in phi_plot]
+    
+    axes[1].errorbar(phi_plot, mean_utils, yerr=std_utils, 
+                     fmt='o-', linewidth=2, markersize=8, capsize=5)
+    axes[1].set_xlabel('φ (preference correlation)', fontsize=12)
+    axes[1].set_ylabel('Mean Utilization Rate (%)', fontsize=12)
+    axes[1].set_title('Average Utilization vs φ', fontsize=13)
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    
+    # Save
+    suffix = _make_filename_suffix(seed=seed, k_dist=k_dist)
+    var_str = f"_var_k" if variable_k else ""
+    fname = f'output_plots/utilization_vs_phi{var_str}{suffix}.png'
+    save_figure(fname)
+    print(f"✓ Saved: {fname}")
+    
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
 def plot_effect_of_components(y_values=[1,2,3,5,10], n=72000, m=533, c=156, k=12,
                               n_samples=2000, n_workers=4, random_seed=None, show=False):
     """
@@ -970,9 +1350,44 @@ if __name__ == "__main__":
     parser.add_argument('--k_std', type=float, default=None, help='Std dev for normal k distribution (optional)')
     parser.add_argument('--show', action='store_true', help='Also display plots interactively (default: save only)')
     parser.add_argument('--self_test', action='store_true', help='Run internal self tests and exit')
+    parser.add_argument('--mixture_y', type=int, default=0, help='If >0, use a mixture of y Mallows components')
+    parser.add_argument('--mixture_phis', type=str, default=None, help='Comma-separated list of phi values for mixture components (overrides auto-generation)')
+    parser.add_argument('--mixture_weights', type=str, default=None, help='Comma-separated mixing weights for components (must match mixture_phis or mixture_y)')
+    parser.add_argument('--mixture_centers_random', action='store_true', help='If set, generate random centers for each mixture component')
     args = parser.parse_args()
 
     np.random.seed(args.seed)
+
+    # Configure global mixture settings if requested
+    if args.mixture_y and args.mixture_y > 0:
+        # Determine phis
+        if args.mixture_phis:
+            try:
+                phis = [float(x) for x in args.mixture_phis.split(',')]
+            except Exception:
+                print("Could not parse --mixture_phis. Expect comma-separated floats. Falling back to auto-generated phis.")
+                phis = list(np.linspace(0.1, 0.9, args.mixture_y))
+        else:
+            phis = list(np.linspace(0.1, 0.9, args.mixture_y))
+
+        # Determine weights
+        if args.mixture_weights:
+            try:
+                weights = [float(x) for x in args.mixture_weights.split(',')]
+            except Exception:
+                print("Could not parse --mixture_weights. Falling back to uniform weights.")
+                weights = [1.0 / len(phis)] * len(phis)
+        else:
+            weights = [1.0 / len(phis)] * len(phis)
+
+        # Centers: either 'random' flag or None (lazy generation inside compute_pi)
+        centers_flag = 'random' if args.mixture_centers_random else None
+
+        # Set globals
+        GLOBAL_MIXTURE_PHIS = phis
+        GLOBAL_MIXTURE_WEIGHTS = weights
+        GLOBAL_MIXTURE_CENTERS = centers_flag
+        print(f"Using mixture Mallows model: y={len(phis)}, phis={phis}, weights={weights}, centers_random={args.mixture_centers_random}")
 
     # Run internal self tests if requested and exit
     if args.self_test:
@@ -993,14 +1408,24 @@ if __name__ == "__main__":
     'effect_phi': lambda: plot_effect_of_phi(n=72000, m=533, c=156, k=12, seed=args.seed, show=args.show),
     'effect_k': lambda: plot_effect_of_k(n=72000, m=533, c=156, phi=0.5, seed=args.seed, show=args.show),
     'pi_r_dist': lambda: plot_pi_r_distribution(k=12, m=533, seed=args.seed, show=args.show),
-    'effect_phi_variable': lambda: plot_effect_of_phi_variable(n=72000, m=533, c=156, k_max=12, alpha=2.0, min_k=1, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
-    'effect_alpha': lambda: plot_effect_of_alpha(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
-    'compare_fixed_variable': lambda: compare_fixed_vs_variable_k(n=72000, m=533, c=156, k_max=12, phi=0.5, alpha=2.0, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
+    'effect_phi_variable': lambda: plot_effect_of_phi_variable(n=72000, m=533, c=156, k_max=12, alpha=2.0, 
+                                                               min_k=1, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
+    'effect_alpha': lambda: plot_effect_of_alpha(n=72000, m=533, c=156, k_max=12, phi=0.5, 
+                                                 k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
+    'compare_fixed_variable': lambda: compare_fixed_vs_variable_k(n=72000, m=533, c=156, k_max=12, phi=0.5, 
+                                                                  alpha=2.0, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
     'fixed_vs_variable_over_phi': lambda: plot_fixed_vs_variable_over_phi(r=5, n=72000, m=533, c=156, k=12, k_max=12,
                                         alpha=2.0, n_samples=choose_samples(1000), n_workers=args.n_workers, k_dist=args.k_dist, k_std=args.k_std, seed=args.seed, show=args.show),
     'effect_components': lambda: plot_effect_of_components(y_values=[1,2,3,5,10], n=72000, m=533, c=156, k=12,
                                n_samples=choose_samples(2000), n_workers=args.n_workers, random_seed=args.seed, show=args.show),
-    'effect_kstd': lambda: plot_effect_of_kstd(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist='normal', k_std_values=[0.5,1.0,2.0,4.0], seed=args.seed, n_samples=choose_samples(1000), n_workers=args.n_workers, show=args.show),
+    'effect_kstd': lambda: plot_effect_of_kstd(n=72000, m=533, c=156, k_max=12, phi=0.5, k_dist='normal', k_std_values=[0.5,1.0,2.0,4.0], 
+                                               seed=args.seed, n_samples=choose_samples(1000), n_workers=args.n_workers, show=args.show),
+    'school_utilization': lambda: plot_school_utilization(
+        n=72000, m=533, c=156, k=12, phi=0.5, variable_k=False, n_samples=choose_samples(1000), 
+        n_workers=args.n_workers, seed=args.seed, show=args.show),
+    'utilization_vs_phi': lambda: plot_utilization_vs_phi(
+        phi_values=[0.3, 0.5, 0.7], n=72000, m=533, c=156, k=12, variable_k=False, n_samples=choose_samples(1000), 
+        n_workers=args.n_workers, seed=args.seed, show=args.show)
     }
 
     to_run = []

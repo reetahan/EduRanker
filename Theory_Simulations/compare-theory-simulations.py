@@ -12,6 +12,8 @@ try:
         normalize_pi,
         prob_unmatched_vectorized,
         prob_unmatched_vectorized_variable,
+        prob_unmatched_vectorized_mc,
+        prob_unmatched_vectorized_variable_mc,
         generate_list_length_distribution,
         sample_list_length
     )
@@ -32,6 +34,11 @@ def generate_mallows_preferences_for_da(
     min_k=1,
     k_dist='normal',
     k_std=None,
+    # mixture args
+    mixture_phis=None,
+    mixture_weights=None,
+    mixture_centers=None,
+    mixture_centers_random=False,
     seed=42
 ):
     """
@@ -73,7 +80,26 @@ def generate_mallows_preferences_for_da(
             k_i = k_max
         
         # Generate ranking using Mallows RSM
-        ranking = sample_mallows_top_k_rsm(m_schools, phi, k_i, center=None)
+        # If a mixture is provided, choose a component per student
+        # Generate ranking using Mallows RSM
+        if mixture_phis is not None:
+            # Normalize weights
+            weights = np.asarray(mixture_weights) if mixture_weights is not None else np.ones(len(mixture_phis)) / len(mixture_phis)
+            if weights.sum() > 0:
+                weights = weights / weights.sum()
+            
+            # Choose component for this student
+            comp = np.random.choice(len(mixture_phis), p=weights)
+            phi_comp = float(mixture_phis[comp])
+            
+            # Use the CENTER from the chosen component (should be pre-generated)
+            center = mixture_centers[comp] if mixture_centers is not None else None
+            
+            # Generate ranking for this student
+            ranking = sample_mallows_top_k_rsm(m_schools, phi_comp, k_i, center=center)
+        else:
+            # Single model (no mixture)
+            ranking = sample_mallows_top_k_rsm(m_schools, phi, k_i, center=None)
         
         # Convert to school IDs (School #0 through School #532)
         school_ids = [f"School #{int(r-1)}" for r in ranking]
@@ -169,6 +195,10 @@ def run_single_da_simulation(
     alpha=2.0,
     k_dist='normal',
     k_std=None,
+    mixture_phis=None,
+    mixture_weights=None,
+    mixture_centers=None,
+    mixture_centers_random=False,
     seed=42
 ):
     """
@@ -191,6 +221,10 @@ def run_single_da_simulation(
         alpha=alpha,
         k_dist=k_dist,
         k_std=k_std,
+        mixture_phis=mixture_phis,
+        mixture_weights=mixture_weights,
+        mixture_centers=mixture_centers,
+        mixture_centers_random=mixture_centers_random,
         seed=seed
     )
     
@@ -276,7 +310,7 @@ def compute_school_utilization(matches, school_capacities):
 
 
 def plot_school_utilization_cdf_across_runs(matches_list, school_capacities,
-                                             bins=100, fname=None, show=False):
+                                             bins=100, fname=None, show=False, log_scale=True):
     """Plot mean cumulative utilization curve across multiple simulation runs.
 
     matches_list: list of matches dicts (one per simulation)
@@ -312,12 +346,23 @@ def plot_school_utilization_cdf_across_runs(matches_list, school_capacities,
     ax.plot(xs, mean_curve, lw=2, label='Mean across runs')
     ax.fill_between(xs, mean_curve - std_curve, mean_curve + std_curve, alpha=0.2,
                     label='±1 std')
-    ax.set_xlim(0, xmax)
+    print(f"Logscale: {log_scale}")
+    if log_scale:
+        ax.set_xscale('log')
+        ax.set_xlim(0.01, xmax)
+        ax.set_xlabel('Utilization (assigned / capacity) [log scale]')
+        ax.grid(alpha=0.3, which='both')
+        if(fname):
+            fname = fname.replace('.png', '_logscale.png')
+    else:
+        ax.set_xlim(0, xmax)
+        ax.set_xlabel('Utilization (assigned / capacity)')
+        ax.grid(alpha=0.3)
+
     ax.set_ylim(0, 1.0)
-    ax.set_xlabel('Utilization (assigned / capacity)')
     ax.set_ylabel('Fraction of schools with utilization ≥ x')
     ax.set_title(f'School utilization CDF across runs (n_runs={len(matches_list)})')
-    ax.grid(alpha=0.3)
+    
     ax.legend()
 
     if fname:
@@ -346,27 +391,45 @@ def compare_theoretical_vs_simulation(
     alpha=2.0,
     k_dist='normal',
     k_std=None,
+    mixture_phis=None,
+    mixture_weights=None,
+    mixture_centers=None,
+    mixture_centers_random=False,
     seed=42,
     n_simulations=20,
     n_samples_pi=2000,
-    n_workers=4
+    n_workers=4,
+    n_mc=5000,
+    theory_method='analytic',
+    show=True
 ):
-    """
-    Main comparison: theoretical model vs DA simulations.
+    """Main comparison: theoretical model vs DA simulations."""
     
-    Returns:
-    --------
-    comparison_results : dict
-        Complete results including plots
-    """
+    # ============================================
+    # FIX: Pre-generate centers if needed
+    # ============================================
+    if mixture_phis is not None and (mixture_centers_random or mixture_centers is None):
+        np.random.seed(seed)
+        mixture_centers = []
+        for i in range(len(mixture_phis)):
+            center = np.random.permutation(np.arange(1, m_schools+1)).tolist()
+            mixture_centers.append(center)
+    
     print(f"\n{'='*80}")
     print(f"VALIDATION: Theoretical vs DA Simulation")
     print(f"{'='*80}")
     print(f"Parameters:")
     print(f"  n_students={n_students}, m_schools={m_schools}, capacity={capacity}")
-    print(f"  phi={phi}, k_max={k_max}, variable_k={variable_k}")
+    
+    if mixture_phis is not None:
+        print(f"  MIXTURE MODEL: y={len(mixture_phis)} components")
+        print(f"    phis={mixture_phis}")
+    else:
+        print(f"  SINGLE MODEL: phi={phi}")
+    
+    print(f"  k_max={k_max}, variable_k={variable_k}")
     if variable_k:
-        print(f"  alpha={alpha}, k_dist={k_dist}, k_std={k_std}")
+        print(f"  alpha={alpha}, k_dist={k_dist}")
     print(f"  seed={seed}, n_simulations={n_simulations}")
     print(f"{'='*80}\n")
     
@@ -375,41 +438,40 @@ def compare_theoretical_vs_simulation(
     # ============================================
     print("[1/3] Computing theoretical predictions...")
     
-    # Compute pi_r distribution
-    if variable_k:
-        pi_vals = compute_pi(
-            phi, k_max, m_schools,
-            n_samples=n_samples_pi,
-            n_workers=n_workers,
-            variable=True,
-            alpha=alpha,
-            min_k=1,
-            k_dist=k_dist,
-            k_std=k_std
-        )
+    if mixture_phis is not None:
+        pi_vals = compute_pi(None, k_max, m_schools, n_samples=n_samples_pi, n_workers=n_workers,
+                             variable=variable_k, alpha=alpha, min_k=1,
+                             mixture_phis=mixture_phis, mixture_weights=mixture_weights,
+                             mixture_centers=mixture_centers,
+                             k_dist=k_dist, k_std=k_std)
     else:
-        pi_vals = compute_pi(
-            phi, k_max, m_schools,
-            n_samples=n_samples_pi,
-            n_workers=n_workers,
-            variable=False
-        )
+        if variable_k:
+            pi_vals = compute_pi(phi, k_max, m_schools, n_samples=n_samples_pi, n_workers=n_workers,
+                                variable=True, alpha=alpha, min_k=1, k_dist=k_dist, k_std=k_std)
+        else:
+            pi_vals = compute_pi(phi, k_max, m_schools, n_samples=n_samples_pi, n_workers=n_workers,
+                                variable=False)
     
     pi_vals = normalize_pi(pi_vals)
-    
-    # Sample lottery numbers for evaluation
     lottery_samples = np.linspace(1, n_students, 100, dtype=int)
     
-    # Compute theoretical P(unmatched | ℓ)
     if variable_k:
-        theoretical_probs = prob_unmatched_vectorized_variable(
-            lottery_samples, pi_vals, capacity, k_max, alpha, min_k=1,
-            k_dist=k_dist, k_std=k_std
-        )
+        if theory_method == 'mc':
+            theoretical_probs = prob_unmatched_vectorized_variable_mc(
+                lottery_samples, pi_vals, capacity, k_max, alpha, min_k=1, k_dist=k_dist, k_std=k_std, n_mc=n_mc, m=m_schools, phi=phi)
+        else:
+            theoretical_probs = prob_unmatched_vectorized_variable(
+                lottery_samples, pi_vals, capacity, k_max, alpha, min_k=1, k_dist=k_dist, k_std=k_std)
     else:
-        theoretical_probs = prob_unmatched_vectorized(
-            lottery_samples, pi_vals, capacity, k_max
-        )
+        if theory_method == 'mc':
+            # Use DA-based MC estimator which simulates earlier students' proposals
+            try:
+                from school_mallows_sim import prob_unmatched_vectorized_mc_da
+                theoretical_probs = prob_unmatched_vectorized_mc_da(lottery_samples, capacity, k_max, m_schools, phi, n_mc=max(100, n_mc//4))
+            except Exception:
+                theoretical_probs = prob_unmatched_vectorized_mc(lottery_samples, pi_vals, capacity, k_max, m=m_schools, phi=phi, n_mc=n_mc)
+        else:
+            theoretical_probs = prob_unmatched_vectorized(lottery_samples, pi_vals, capacity, k_max)
     
     avg_theoretical = np.mean(theoretical_probs)
     print(f"  Theoretical avg P(unmatched): {avg_theoretical:.4f}")
@@ -422,27 +484,22 @@ def compare_theoretical_vs_simulation(
     simulation_results = []
     
     for sim in tqdm(range(n_simulations), desc="DA Simulations"):
-        sim_seed = seed + sim * 1000  # Ensure different seeds
+        sim_seed = seed + sim * 1000
         
-        # Run DA
         matches, metadata, student_info = run_single_da_simulation(
-            n_students=n_students,
-            m_schools=m_schools,
-            capacity=capacity,
-            phi=phi,
-            k_max=k_max,
-            variable_k=variable_k,
-            alpha=alpha,
-            k_dist=k_dist,
-            k_std=k_std,
+            n_students=n_students, m_schools=m_schools, capacity=capacity,
+            phi=phi, k_max=k_max, variable_k=variable_k, alpha=alpha,
+            k_dist=k_dist, k_std=k_std,
+            mixture_phis=mixture_phis, mixture_weights=mixture_weights,
+            mixture_centers=mixture_centers,
+            mixture_centers_random=False, 
             seed=sim_seed
         )
         
-        # Analyze results
         results = analyze_da_results(matches, student_info, n_students)
-    # Keep matches with the analysis so we can compute utilizations later
-    results['matches'] = matches
-    simulation_results.append(results)
+        results['matches'] = matches
+        simulation_results.append(results)
+
     
     # ============================================
     # PART 3: Compare Results
@@ -514,6 +571,7 @@ def compare_theoretical_vs_simulation(
             label='Theoretical', linewidth=2)
     ax.scatter(lottery_samples, empirical_probs, c='red', 
                label='Simulation', s=30, alpha=0.6)
+    ax.set_ylim(0, max(0.1, max(np.max(theoretical_probs) * 1.1, np.max(empirical_probs) * 1.1)))
     ax.set_xlabel('Lottery Number ℓ')
     ax.set_ylabel('P(unmatched | ℓ)')
     ax.set_title(f'Theoretical vs Simulation (φ={phi}, k={k_max}, var_k={variable_k})')
@@ -562,21 +620,27 @@ def compare_theoretical_vs_simulation(
     
     plt.tight_layout()
     
-    var_str = f"_var_k_{k_dist}" if variable_k else ""
-    fname = f'output_plots/theory_gs_comparison_validation_phi{phi}_k{k_max}{var_str}_seed{seed}.png'
+    if mixture_phis is not None:
+        phi_str = f'mix{len(mixture_phis)}_phi{min(mixture_phis):.1f}-{max(mixture_phis):.1f}'
+    else:
+        phi_str = f'phi{phi}'
+    
+    var_str = f'_vark_{k_dist}_a{alpha}' if variable_k else ''
+    
+    fname = f'output_plots/theory_gs_{phi_str}_k{k_max}{var_str}_seed{seed}.png'
     plt.savefig(fname, dpi=300, bbox_inches='tight')
     print(f"✓ Saved: {fname}")
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.close()
     
-    # ============================================
-    # Extra: school utilization across runs
-    # ============================================
     try:
         matches_list = [r['matches'] for r in simulation_results]
         # Build capacities map consistent with generate_school_rankings_for_da
         capacities = {f"School #{s}": capacity for s in range(m_schools)}
-        util_fname = f'output_plots/school_utilization_phi{phi}_k{k_max}_seed{seed}.png'
-        plot_school_utilization_cdf_across_runs(matches_list, capacities, bins=200, fname=util_fname, show=False)
+        util_fname = f'output_plots/school_util_{phi_str}_k{k_max}{var_str}_seed{seed}.png'
+        plot_school_utilization_cdf_across_runs(matches_list, capacities, bins=200, fname=util_fname, show=False, log_scale=True)
     except Exception as e:
         print(f"Could not generate utilization plot: {e}")
     return {
@@ -685,17 +749,49 @@ if __name__ == "__main__":
     parser.add_argument('--alpha', type=float, default=2.0,
                         help='Power law alpha (default: 2.0)')
     parser.add_argument('--k_dist', choices=['power_tail', 'centered_power', 'normal'],
-                        default='power_tail', help='List length distribution')
+                        default='normal', help='List length distribution')
     parser.add_argument('--n_sims', type=int, default=20,
                         help='Number of DA simulations (default: 20)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed (default: 42)')
+    parser.add_argument('--mixture_y', type=int, default=0, help='If >0, use a mixture of y Mallows components')
+    parser.add_argument('--mixture_phis', type=str, default=None, help='Comma-separated list of phi values for mixture components (overrides auto-generation)')
+    parser.add_argument('--mixture_weights', type=str, default=None, help='Comma-separated mixing weights for components (must match mixture_phis or mixture_y)')
+    parser.add_argument('--mixture_centers_random', action='store_true', help='If set, generate random centers for each mixture component')
+    parser.add_argument('--theory_method', choices=['analytic', 'mc'], default='analytic', help='Theory P(unmatched) method: analytic or mc')
+    parser.add_argument('--n_mc', type=int, default=5000, help='Number of Monte-Carlo draws for theory when using --theory_method mc')
     
     args = parser.parse_args()
     
     if args.mode == 'suite':
         validation_suite()
     else:
+    
+        mixture_phis = None
+        mixture_weights = None
+        mixture_centers_random = False
+        
+        if args.mixture_y and args.mixture_y > 0:
+            if args.mixture_phis:
+                try:
+                    mixture_phis = [float(x) for x in args.mixture_phis.split(',')]
+                except Exception:
+                    print("Could not parse --mixture_phis; falling back to auto-generated phis.")
+                    mixture_phis = list(np.linspace(0.1, 0.9, args.mixture_y))
+            else:
+                mixture_phis = list(np.linspace(0.1, 0.9, args.mixture_y))
+
+            if args.mixture_weights:
+                try:
+                    mixture_weights = [float(x) for x in args.mixture_weights.split(',')]
+                except Exception:
+                    print("Could not parse --mixture_weights; using uniform weights.")
+                    mixture_weights = [1.0 / len(mixture_phis)] * len(mixture_phis)
+            else:
+                mixture_weights = [1.0 / len(mixture_phis)] * len(mixture_phis)
+
+            mixture_centers_random = bool(args.mixture_centers_random)
+
         compare_theoretical_vs_simulation(
             n_students=args.n_students,
             m_schools=533,
@@ -705,8 +801,16 @@ if __name__ == "__main__":
             variable_k=args.variable_k,
             alpha=args.alpha,
             k_dist=args.k_dist,
+            k_std=None,
+            mixture_phis=mixture_phis,
+            mixture_weights=mixture_weights,
+            mixture_centers=None, 
+            mixture_centers_random=mixture_centers_random,
             seed=args.seed,
             n_simulations=args.n_sims,
             n_samples_pi=2000,
-            n_workers=4
+            n_workers=4,
+            n_mc=args.n_mc,
+            theory_method=args.theory_method,
+            show=False
         )

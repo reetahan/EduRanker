@@ -190,8 +190,12 @@ def simulate_nyc_fixed_k(aggregate_type='residential', phi=0.8, k_values=None,
     mixture_phis = [phi] * n_components
     mixture_weights = [1.0 / n_components] * n_components
     
-    print(f"\nSimulating with {n_components} components, phi={phi}")
-    print(f"Testing k values: {k_values}")
+    print(f"\nMixture-of-Mallows Model:")
+    print(f"  - {n_components} components (one per {aggregate_type})")
+    print(f"  - Each component: φ = {phi}")
+    print(f"  - Equal weights: {1.0/n_components:.4f} per component")
+    print(f"  - Centers: real NYC {aggregate_type} rankings")
+    print(f"\nTesting k values: {k_values}")
     
     results = {}
     
@@ -1512,6 +1516,28 @@ if __name__ == "__main__":
         for k in k_vals:
             print(f"  k={k:2d}: avg unmatched = {results[k]['avg_unmatched']:.4f}, "
                   f"median unmatched = {results[k]['median_unmatched']:.4f}")
+        
+        # Generate plot
+        if 'effect_k' in args.plots or 'all' in args.plots:
+            print("\nGenerating plot...")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            k_list = sorted(results.keys())
+            avg_vals = [results[k]['avg_unmatched'] for k in k_list]
+            
+            ax.plot(k_list, avg_vals, 'o-', label='Average P(unmatched)', linewidth=2, markersize=8)
+            
+            ax.set_xlabel('List Length (k)', fontsize=12)
+            ax.set_ylabel('Probability of Being Unmatched', fontsize=12)
+            ax.set_title(f'NYC School Choice: Effect of k (φ={args.phi}, {args.aggregate_type}, 32-component Mallows)', fontsize=14)
+            ax.legend(fontsize=11)
+            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            filename = f'nyc_effect_k_phi{args.phi}_{args.aggregate_type}.png'
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            print(f"Plot saved to: {filename}")
+            plt.close()
         
         exit(0)
 

@@ -3,67 +3,23 @@ import numpy as np
 from pathlib import Path
 
 def substitute_suppressed_values(df, columns):
-    """
-    Substitute suppressed values: 's' -> 1, 's^' -> 6
-    
-    Args:
-        df: DataFrame to process
-        columns: List of column names to apply substitution
-    """
     df = df.copy()
     for col in columns:
         if col in df.columns:
             df[col] = df[col].replace({'s': 1, 's^': 6})
-            # Convert to numeric, coercing errors to NaN
             df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
 
 def add_ratio_and_rank(df, true_col, total_col, category_col, ratio_col_name='Ratio', rank_col_name='Rank'):
-    """
-    Add ratio and rank columns to a dataframe.
-    
-    Ratio = true / total for each category
-    Rank = ranking within each category by ratio (1 = best)
-    
-    Special handling: Rows with both true=1 and total=1 (from suppressed values)
-    are ranked at the bottom of their category since they're artificial.
-    
-    Args:
-        df: DataFrame to process
-        true_col: Name of the "true applicants" column
-        total_col: Name of the "total applicants" column
-        category_col: Name of the category column to group by for ranking
-        ratio_col_name: Name for the new ratio column
-        rank_col_name: Name for the new rank column
-    
-    Returns:
-        DataFrame with ratio and rank columns added
-    """
+    """Calculate ratio (true^2/total) and rank within categories. Suppressed rows (true=1, total=1) rank last."""
     df = df.copy()
+    df[ratio_col_name] = (df[true_col] ** 2) / df[total_col]
+    df[ratio_col_name] = df[ratio_col_name].fillna(0)
     
-    # Calculate ratio
-    df[ratio_col_name] = df[true_col] / df[total_col]
-    df[ratio_col_name] = df[ratio_col_name].fillna(0)  # Handle division by zero
-    
-    # Identify suppressed rows (both true and total are 1)
     df['_is_suppressed'] = (df[true_col] == 1) & (df[total_col] == 1)
-    
-    # Create a modified ratio for ranking purposes
-    # Suppressed rows get -1 so they rank last
-    df['_rank_ratio'] = df.apply(
-        lambda row: -1 if row['_is_suppressed'] else row[ratio_col_name],
-        axis=1
-    )
-    
-    # Rank within each category (ascending=False means higher ratio = better rank)
-    # method='min' means ties get the same rank
-    df[rank_col_name] = df.groupby(category_col)['_rank_ratio'].rank(
-        ascending=False, 
-        method='min'
-    ).astype(int)
-    
-    # Clean up temporary columns
+    df['_rank_ratio'] = df.apply(lambda row: -1 if row['_is_suppressed'] else row[ratio_col_name], axis=1)
+    df[rank_col_name] = df.groupby(category_col)['_rank_ratio'].rank(ascending=False, method='min').astype(int)
     df = df.drop(columns=['_is_suppressed', '_rank_ratio'])
     
     return df
@@ -103,31 +59,19 @@ def get_borough_from_zip(zip_code):
         return 'Unknown'
 
 
-def create_language_aggregates(data1_path, output_path):
-    """
-    Create aggregates by home language from DATA1
-    Filters rows where Category starts with "Home Language is"
-    Only includes high schools (schools with Grade 9 applicants)
-    """
-    print("Creating language aggregates...")
-    
-    # Read DATA1 School sheet
+def create_language_aggregates(data1_path, output_dir):
+    """Generate separate CSVs for top 7 most common home languages."""
     df = pd.read_excel(data1_path, sheet_name='School')
     
-    # Filter to only high schools (schools with any Grade 9 data in "All Students")
     df_all = df[df['Category'] == 'All Students'].copy()
     df_all['Grade 9 Total Applicants'] = df_all['Grade 9 Total Applicants'].replace({'s': 1, 's^': 6})
     df_all['Grade 9 Total Applicants'] = pd.to_numeric(df_all['Grade 9 Total Applicants'], errors='coerce')
     high_schools = df_all[df_all['Grade 9 Total Applicants'].notna()]['School DBN'].unique()
-    print(f"Filtering to {len(high_schools)} high schools with Grade 9 applicants")
     
-    # Filter to only language rows from high schools
     df_lang = df[(df['Category'].str.startswith('Home Language is', na=False)) & 
                  (df['School DBN'].isin(high_schools))].copy()
-    print(f"Found {len(df_lang):,} language rows across {df_lang['School DBN'].nunique()} schools")
-    
-    # Extract language name from Category
     df_lang['Home Language'] = df_lang['Category'].str.replace('Home Language is ', '', regex=False)
+    top_languages = df_lang['Home Language'].value_counts().head(7).index.tolist()
     
     # Define columns to process
     numeric_cols = [
@@ -172,49 +116,31 @@ def create_language_aggregates(data1_path, output_path):
         rank_col_name='Rank'
     )
     
-    result_df.to_csv(output_path, index=False)
-    print(f"✓ Saved language aggregates: {output_path} ({len(result_df):,} rows)")
+    output_dir.mkdir(exist_ok=True)
+    for language in top_languages:
+        lang_data = result_df[result_df['Home Language'] == language].copy().sort_values('Rank')
+        safe_lang_name = language.replace(' ', '_').replace('/', '_').lower()
+        lang_data.to_csv(output_dir / f"ranking_language_{safe_lang_name}.csv", index=False)
+    
     return result_df
 
 
 def create_zip_code_aggregates(data1_path, output_path):
-    """
-    Create aggregates by home zip code from DATA1
-    Filters rows where Category starts with "Zip Code"
-    Only includes high schools (schools with Grade 9 applicants)
-    """
-    print("\nCreating zip code aggregates...")
-    
-    # Read DATA1 School sheet
+    """Generate zip code aggregates."""
     df = pd.read_excel(data1_path, sheet_name='School')
     
-    # Filter to only high schools (schools with any Grade 9 data in "All Students")
     df_all = df[df['Category'] == 'All Students'].copy()
     df_all['Grade 9 Total Applicants'] = df_all['Grade 9 Total Applicants'].replace({'s': 1, 's^': 6})
     df_all['Grade 9 Total Applicants'] = pd.to_numeric(df_all['Grade 9 Total Applicants'], errors='coerce')
     high_schools = df_all[df_all['Grade 9 Total Applicants'].notna()]['School DBN'].unique()
-    print(f"Filtering to {len(high_schools)} high schools with Grade 9 applicants")
     
-    # Filter to only zip code rows from high schools
     df_zip = df[(df['Category'].str.startswith('Zip Code', na=False)) & 
                 (df['School DBN'].isin(high_schools))].copy()
-    print(f"Found {len(df_zip):,} zip code rows across {df_zip['School DBN'].nunique()} schools")
-    
-    # Extract zip code from Category (e.g., "Zip Code 11213" -> "11213")
     df_zip['Home Zip Code'] = df_zip['Category'].str.replace('Zip Code ', '', regex=False)
     
-    # Define columns to process
-    numeric_cols = [
-        'Grade 9 Total Applicants',
-        'Grade 9 True Applicants',
-        'Grade 9 Seats Available',
-        'Grade 9 Offers'
-    ]
-    
-    # Substitute suppressed values
+    numeric_cols = ['Grade 9 Total Applicants', 'Grade 9 True Applicants', 'Grade 9 Seats Available', 'Grade 9 Offers']
     df_zip = substitute_suppressed_values(df_zip, numeric_cols)
     
-    # Get school totals from "All Students" rows (high schools only)
     df_totals = df[(df['Category'] == 'All Students') & 
                    (df['School DBN'].isin(high_schools))][['School DBN', 'Grade 9 Total Applicants', 
                                                             'Grade 9 True Applicants', 'Grade 9 Seats Available', 
@@ -222,11 +148,8 @@ def create_zip_code_aggregates(data1_path, output_path):
     df_totals = substitute_suppressed_values(df_totals, numeric_cols)
     df_totals.columns = ['School DBN', 'Total Applicants School', 'Total True Applicants School', 
                          'Seats Available School', 'Offers School']
-    
-    # Merge school totals
     df_zip = df_zip.merge(df_totals, on='School DBN', how='left')
     
-    # Select final columns
     result_df = df_zip[[
         'School DBN', 'School Name', 'School District', 'Home Zip Code',
         'Grade 9 Total Applicants', 'Grade 9 True Applicants',
@@ -237,79 +160,42 @@ def create_zip_code_aggregates(data1_path, output_path):
         'Grade 9 True Applicants': 'True Applicants Zip'
     })
     
-    # Add ratio and rank columns
-    result_df = add_ratio_and_rank(
-        result_df,
-        true_col='True Applicants Zip',
-        total_col='Total Applicants Zip',
-        category_col='Home Zip Code',
-        ratio_col_name='Ratio',
-        rank_col_name='Rank'
-    )
-    
+    result_df = add_ratio_and_rank(result_df, 'True Applicants Zip', 'Total Applicants Zip', 'Home Zip Code')
     result_df.to_csv(output_path, index=False)
-    print(f"✓ Saved zip code aggregates: {output_path} ({len(result_df):,} rows)")
     return result_df
 
 
 def create_borough_aggregates(data1_path, output_path):
-    """
-    Create aggregates by home borough from DATA1
-    Borough is derived from zip code rows in the Category column
-    Only includes high schools (schools with Grade 9 applicants)
-    """
-    print("\nCreating borough aggregates...")
-    
-    # Read DATA1 School sheet
+    """Generate borough aggregates (derived from zip codes)."""
     df = pd.read_excel(data1_path, sheet_name='School')
     
-    # Filter to only high schools (schools with any Grade 9 data in "All Students")
     df_all = df[df['Category'] == 'All Students'].copy()
     df_all['Grade 9 Total Applicants'] = df_all['Grade 9 Total Applicants'].replace({'s': 1, 's^': 6})
     df_all['Grade 9 Total Applicants'] = pd.to_numeric(df_all['Grade 9 Total Applicants'], errors='coerce')
     high_schools = df_all[df_all['Grade 9 Total Applicants'].notna()]['School DBN'].unique()
-    print(f"Filtering to {len(high_schools)} high schools with Grade 9 applicants")
     
-    # Filter to only zip code rows from high schools
     df_zip = df[(df['Category'].str.startswith('Zip Code', na=False)) & 
                 (df['School DBN'].isin(high_schools))].copy()
-    print(f"Found {len(df_zip):,} zip code rows to derive borough from")
-    
-    # Extract zip code from Category
     df_zip['Home Zip Code'] = df_zip['Category'].str.replace('Zip Code ', '', regex=False)
-    
-    # Derive borough from zip code
     df_zip['Home Borough'] = df_zip['Home Zip Code'].apply(get_borough_from_zip)
     
-    # Define columns to process
-    numeric_cols = [
-        'Grade 9 Total Applicants',
-        'Grade 9 True Applicants',
-        'Grade 9 Seats Available',
-        'Grade 9 Offers'
-    ]
-    
-    # Substitute suppressed values
+    numeric_cols = ['Grade 9 Total Applicants', 'Grade 9 True Applicants', 'Grade 9 Seats Available', 'Grade 9 Offers']
     df_zip = substitute_suppressed_values(df_zip, numeric_cols)
     
-    # Aggregate by school and borough
     aggregates = []
     for (school_dbn, school_name, school_district, borough), group in df_zip.groupby(
         ['School DBN', 'School Name', 'School District', 'Home Borough']
     ):
-        row = {
+        aggregates.append({
             'School DBN': school_dbn,
             'School Name': school_name,
             'School District': school_district,
             'Home Borough': borough,
             'Total Applicants Borough': group['Grade 9 Total Applicants'].sum(),
             'True Applicants Borough': group['Grade 9 True Applicants'].sum(),
-        }
-        aggregates.append(row)
-    
+        })
     result_df = pd.DataFrame(aggregates)
     
-    # Get school totals from "All Students" rows (high schools only)
     df_totals = df[(df['Category'] == 'All Students') & 
                    (df['School DBN'].isin(high_schools))][['School DBN', 'Grade 9 Total Applicants', 
                                                             'Grade 9 True Applicants', 'Grade 9 Seats Available', 
@@ -317,46 +203,18 @@ def create_borough_aggregates(data1_path, output_path):
     df_totals = substitute_suppressed_values(df_totals, numeric_cols)
     df_totals.columns = ['School DBN', 'Total Applicants School', 'Total True Applicants School', 
                          'Seats Available School', 'Offers School']
-    
-    # Merge school totals
     result_df = result_df.merge(df_totals, on='School DBN', how='left')
-    
-    # Add ratio and rank columns
-    result_df = add_ratio_and_rank(
-        result_df,
-        true_col='True Applicants Borough',
-        total_col='Total Applicants Borough',
-        category_col='Home Borough',
-        ratio_col_name='Ratio',
-        rank_col_name='Rank'
-    )
-    
+    result_df = add_ratio_and_rank(result_df, 'True Applicants Borough', 'Total Applicants Borough', 'Home Borough')
     result_df.to_csv(output_path, index=False)
-    print(f"✓ Saved borough aggregates: {output_path} ({len(result_df):,} rows)")
     return result_df
 
 
 def convert_master_to_csv(xlsx_path, csv_path):
-    """Convert residential_district.xlsx to CSV and add ratio/rank columns"""
-    print("\nConverting residential_district.xlsx to CSV...")
+    """Convert residential_district.xlsx to CSV with ratio/rank."""
     df = pd.read_excel(xlsx_path)
-    
-    # Substitute suppressed values in the relevant columns
-    numeric_cols = ['Total Applicants Residential District', 'True Applicants Residential District']
-    df = substitute_suppressed_values(df, numeric_cols)
-    
-    # Add ratio and rank columns
-    df = add_ratio_and_rank(
-        df,
-        true_col='True Applicants Residential District',
-        total_col='Total Applicants Residential District',
-        category_col='Residential District',
-        ratio_col_name='Ratio',
-        rank_col_name='Rank'
-    )
-    
+    df = substitute_suppressed_values(df, ['Total Applicants Residential District', 'True Applicants Residential District'])
+    df = add_ratio_and_rank(df, 'True Applicants Residential District', 'Total Applicants Residential District', 'Residential District')
     df.to_csv(csv_path, index=False)
-    print(f"✓ Saved residential_district.csv: {csv_path} ({len(df):,} rows, {len(df.columns)} columns)")
     return df
 
 
@@ -367,18 +225,14 @@ if __name__ == "__main__":
     output_dir = base_path / "output"
     output_dir.mkdir(exist_ok=True)
     
-    print("="*80)
-    print("GENERATING AGGREGATE DATASETS")
-    print("="*80)
     
     # 1. Convert master_data to CSV
     master_xlsx = base_path / "residential_district.xlsx"
     master_csv = output_dir / "residential_district.csv"
     convert_master_to_csv(master_xlsx, master_csv)
     
-    # 2. Create language aggregates
-    language_csv = output_dir / "language_aggregates.csv"
-    create_language_aggregates(data1_path, language_csv)
+    # 2. Create language aggregates (outputs multiple CSVs, one per top 7 language)
+    create_language_aggregates(data1_path, output_dir)
     
     # 3. Create zip code aggregates
     zip_csv = output_dir / "zip_code_aggregates.csv"
@@ -388,11 +242,4 @@ if __name__ == "__main__":
     borough_csv = output_dir / "borough_aggregates.csv"
     create_borough_aggregates(data1_path, borough_csv)
     
-    print("\n" + "="*80)
-    print("COMPLETE!")
-    print("="*80)
     print(f"\nGenerated files in '{output_dir}/':")
-    print("  - master_data.csv")
-    print("  - language_aggregates.csv")
-    print("  - zip_code_aggregates.csv")
-    print("  - borough_aggregates.csv")

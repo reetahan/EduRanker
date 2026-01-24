@@ -164,7 +164,6 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
                               lottery_fixed, K=2, M=1):
     
     district_name = df['Residential District'].unique()[district_id]
-    
     df_district = df[df['Residential District'] == district_name]
     
     obs_total_app = df_district.set_index('School DBN')['Total Applicants by Residential District'].to_dict()
@@ -179,7 +178,6 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
     ])
     
     n_students_district = int(match_row['Total Applicants'])
-    
     schools_list = df_district['School DBN'].values
     school_to_idx = {s: i for i, s in enumerate(schools_list)}
     
@@ -191,10 +189,10 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
     lottery_district = lottery_fixed[student_start:student_end]
     
     eval_count = [0]
-    found_solution = [False]  
+    found_solution = [False]
     
     def objective(params):
-        if found_solution[0]:  
+        if found_solution[0]:
             return 0.0
             
         n_schools = len(schools_list)
@@ -240,38 +238,31 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
         exp_true = np.mean(true_app_samples, axis=0)
         exp_match = np.mean(match_stats_samples, axis=0)
         
-        pct_error_total = []
+        pct_errors = []
         for s in obs_total_app.keys():
             if obs_total_app[s] > 0:
-                pct_error_total.append(abs(exp_total[school_to_idx[s]] - obs_total_app[s]) / obs_total_app[s])
+                pct_errors.append(abs(exp_total[school_to_idx[s]] - obs_total_app[s]) / obs_total_app[s])
         
-        pct_error_true = []
         for s in obs_true_app.keys():
             if obs_true_app[s] > 0:
-                pct_error_true.append(abs(exp_true[school_to_idx[s]] - obs_true_app[s]) / obs_true_app[s])
+                pct_errors.append(abs(exp_true[school_to_idx[s]] - obs_true_app[s]) / obs_true_app[s])
         
-        pct_error_match = []
         for i in range(4):
             if obs_match_stats[i] > 0:
-                pct_error_match.append(abs(exp_match[i] - obs_match_stats[i]) / obs_match_stats[i])
+                pct_errors.append(abs(exp_match[i] - obs_match_stats[i]) / obs_match_stats[i])
         
-        max_pct_error = max(
-            max(pct_error_total) if pct_error_total else 0,
-            max(pct_error_true) if pct_error_true else 0,
-            max(pct_error_match) if pct_error_match else 0
-        )
+        max_pct_error = max(pct_errors) if pct_errors else 0
         
-        # Check if within 5%
         if max_pct_error <= 0.05:
             found_solution[0] = True
-            print(f"\n✓ Found solution within 5% error!")
+            print(f"\n✓ FOUND SOLUTION within 5%!")
             print(f"  Central rankings:")
             for k in range(K):
-                print(f"    Component {k+1}: {central_rankings[k][:10]}...")  # First 10 schools
+                print(f"    Component {k+1}: {central_rankings[k][:10]}...")
             print(f"  Phis: {phis}")
             print(f"  Mixture weights: {mixture_weights}")
             print(f"  Max percentage error: {max_pct_error*100:.2f}%")
-            return 0.0 
+            return 0.0
         
         error_total = sum(abs(exp_total[school_to_idx[s]] - obs_total_app[s]) 
                          for s in obs_total_app.keys())
@@ -282,21 +273,20 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
         total_error = error_total + error_true + error_match
         
         if eval_count[0] % 10 == 0:
-            print(f"    Evaluation {eval_count[0]}: error={total_error:.2f}, max %error={max_pct_error*100:.2f}%")
+            print(f"    Eval {eval_count[0]}: error={total_error:.2f}, max%err={max_pct_error*100:.1f}%")
         
         return total_error
     
-    return objective, schools_list, found_solution 
+    return objective, schools_list, found_solution
 
 def optimize_district(district_id, df, match_stats_df, school_info_df, 
                      lottery_fixed, K=2):
     
-    objective, schools_list, found_solution = create_district_objective(  
+    objective, schools_list, found_solution = create_district_objective(
         district_id, df, match_stats_df, school_info_df, lottery_fixed, K, M=1
     )
     
     n_schools = len(schools_list)
-    
     district_name = df['Residential District'].unique()[district_id]
     df_district = df[df['Residential District'] == district_name]
     
@@ -322,17 +312,17 @@ def optimize_district(district_id, df, match_stats_df, school_info_df,
     result = differential_evolution(
         objective,
         bounds=bounds,
-        maxiter=1000,  
+        maxiter=1000,
         popsize=1,
         seed=GLOBAL_SEED,
         workers=1,
-        atol=0.0,  
-        tol=0.0,   
+        atol=0.0,
+        tol=0.0,
         disp=True
     )
     
-    if not found_solution[0]:  
-        print(f"  Warning: Did not find solution within 5% after {result.nfev} evaluations")
+    if not found_solution[0]:
+        print(f"  Warning: No solution within 5% found after {result.nfev} evaluations")
     
     best_params = result.x
     

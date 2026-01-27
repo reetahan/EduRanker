@@ -1,24 +1,9 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import differential_evolution
-from scipy.special import softmax
 from scipy.stats import chisquare
 
 GLOBAL_SEED = 42
 
-def compute_p_value(observed, simulated_distribution):
-    if len(simulated_distribution) == 0:
-        return 0.0
-    
-    # Two-tailed test
-    mean_sim = np.mean(simulated_distribution)
-    distance_obs = abs(observed - mean_sim)
-    distances_sim = np.abs(simulated_distribution - mean_sim)
-    
-    p_value = np.mean(distances_sim >= distance_obs)
-    
-    return p_value
 
 def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_df, 
                         lottery_global, m=50):
@@ -33,7 +18,7 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
     
     # Collect simulation results
     sim_match_stats = {d: [] for d in districts}
-    sim_total_apps = {d: [] for d in districts}
+    sim_total_apps = {d: [] for d in districts} 
     sim_true_apps = {d: [] for d in districts}
     sim_utilization = []
     
@@ -50,8 +35,8 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
         for district in districts:
             d_idx = district_to_idx[district]
             sim_match_stats[district].append(agg['match_stats'][d_idx, :])
-            sim_total_apps[district].append(np.sum(agg['total_app'][d_idx, :]))
-            sim_true_apps[district].append(np.sum(agg['true_app'][d_idx, :]))
+            sim_total_apps[district].append(agg['total_app'][d_idx, :])  
+            sim_true_apps[district].append(agg['true_app'][d_idx, :])
         
         sim_utilization.append(agg['filled'])
     
@@ -84,34 +69,34 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
         
         # Apps (scaled to simulation size)
         df_district = df[df['Residential District'] == district]
-        obs_total = df_district['Total Applicants by Residential District'].sum()
-        obs_true = df_district['True Applicants by Residential District'].sum()
         
-        n_students_obs = int(obs_match['Total Applicants'])
-        n_students_sim = n_students_obs  # Same size
+        obs_total_vec = df_district['Total Applicants by Residential District'].values
+        obs_true_vec = df_district['True Applicants by Residential District'].values
         
-        scale_factor = n_students_sim / n_students_obs
-        obs_total_scaled = obs_total * scale_factor
-        obs_true_scaled = obs_true * scale_factor
+        sim_total_array = np.array(sim_total_apps[district])  # m × n_schools
+        sim_true_array = np.array(sim_true_apps[district])    # m × n_schools
         
-        p_val_total = compute_p_value(obs_total_scaled, np.array(sim_total_apps[district]))
-        p_val_true = compute_p_value(obs_true_scaled, np.array(sim_true_apps[district]))
+        mean_sim_total = np.mean(sim_total_array, axis=0)
+        mean_sim_true = np.mean(sim_true_array, axis=0)
+        
+        mean_sim_total = np.clip(mean_sim_total, 0.1, None)
+        mean_sim_true = np.clip(mean_sim_true, 0.1, None)
+        
+        _, p_val_total = chisquare(obs_total_vec, mean_sim_total)
+        _, p_val_true = chisquare(obs_true_vec, mean_sim_true)
         
         p_values[f'{district}_total_apps'] = p_val_total
         p_values[f'{district}_true_apps'] = p_val_true
     
     # School utilization (global)
     obs_filled = df.groupby('School DBN')['Total True Applicants School'].first().values
-    sim_util_array = np.array(sim_utilization)
+    sim_util_array = np.array(sim_utilization)  # m × s
     
-    # Average p-value across schools
-    util_p_values = []
-    for school_idx in range(len(obs_filled)):
-        if obs_filled[school_idx] > 0:
-            p_val = compute_p_value(obs_filled[school_idx], sim_util_array[:, school_idx])
-            util_p_values.append(p_val)
+    mean_sim = np.mean(sim_util_array, axis=0)
+    mean_sim = np.clip(mean_sim, 0.1, None)
     
-    p_values['utilization_avg'] = np.mean(util_p_values) if util_p_values else 1.0
+    _, p_val = chisquare(obs_filled, mean_sim)
+    p_values['utilization'] = p_val
     
     return p_values
 
@@ -464,7 +449,7 @@ df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_
 params, p_values, lottery = find_valid_parameters(
     df, match_stats_df, school_info_df,
     n_attempts=5,
-    m=5,
+    m=2,
     K=1,
     seed=GLOBAL_SEED
 )

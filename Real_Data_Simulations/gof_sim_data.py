@@ -60,6 +60,10 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
         # Use chi-squared test on the distribution
         mean_sim = np.mean(sim_match_dist, axis=0)
         
+        # Normalize both to sum to 100 (handle rounding errors)
+        obs_match_vec = obs_match_vec / obs_match_vec.sum() * 100
+        mean_sim = mean_sim / mean_sim.sum() * 100
+        
         # Avoid division by zero
         mean_sim = np.clip(mean_sim, 0.1, None)
         

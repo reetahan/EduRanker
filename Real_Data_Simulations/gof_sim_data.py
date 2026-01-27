@@ -39,7 +39,7 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
     
     for sim_num in range(m):
         if sim_num % 10 == 0:
-            print(f"    Simulation {sim_num}/{m}...", end='\r')
+            print(f"    Simulation {sim_num+1}/{m}...", end='\r')
         
         agg = run_single_simulation(params_all_districts, df, match_stats_df, 
                                     school_info_df, lottery_global)
@@ -128,9 +128,10 @@ def preprocess_data(df, match_stats_df, school_info_df):
     df = df[['School DBN', 'School Name', 'School District', 'Residential District', 
          'Total Applicants by Residential District', 'True Applicants by Residential District',
          'Total Applicants School', 'Total True Applicants School', 'Ratio', 'Rank']]
+    df = df[df['Residential District'] != 'Unknown']
     dtype_mapping = {}
     for i in range(len(df.columns.array)):
-        if(i > 3):
+        if(i > 2):
             dtype_mapping[df.columns.array[i]] = 'int64'
     df = df.astype(dtype_mapping)
 
@@ -151,7 +152,8 @@ def preprocess_data(df, match_stats_df, school_info_df):
     match_stats_df = match_stats_df.astype(dtype_mapping)
     match_stats_df['Unmatched'] = 100.0 - match_stats_df['% Matches to Choice 1-12'].astype(float)
     match_stats_df = match_stats_df.drop(columns=['% Matches to Choice 1-12'])
-    
+    match_stats_df = match_stats_df[~match_stats_df['Residential District'].isin(['Total', 'Unknown '])]
+    match_stats_df['Residential District'] = pd.to_numeric(match_stats_df['Residential District'])
     
     return df, match_stats_df, school_info_df
 
@@ -201,6 +203,8 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     for student_id in range(n_students):
         district_idx = district_to_idx[district_assignments[student_id]]
         ranking = student_rankings[student_id]
+        if isinstance(ranking, np.ndarray):
+            ranking = ranking.tolist()
         match = matches[student_id]
         
         for school in ranking:
@@ -208,8 +212,13 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
             total_app[district_idx, school_idx] += 1
         
         if match != '-1':
+            match = str(match)  
             match_school_idx = school_to_idx[match]
-            match_position = np.where(ranking == match)[0][0]
+            try:
+                match_position = ranking.index(match)  
+            except ValueError:
+                print(f"Warning: Student matched to {match} not in ranking: {ranking}")
+                continue
             
             for school in ranking[match_position:]:
                 school_idx = school_to_idx[school]
@@ -243,6 +252,7 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     }
 
 def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
+    print(f"Running Gale-Shapley algorithm...")
     n_students = len(student_rankings)
     n_schools = len(school_capacities)
     
@@ -252,6 +262,8 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
     school_tentative = [[] for _ in range(n_schools)]
     
     for student in student_order:
+        if(student % 1000 == 0):
+            print(f"  Processing student {student}...")
         for school in student_rankings[student]:
             if len(school_tentative[school]) < school_capacities[school]:
                 school_tentative[school].append(student)
@@ -320,11 +332,11 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
     
     all_rankings = []
     all_district_assignments = []
-    all_lottery = []
     
-    districts = list(params_all_districts.keys())
+    districts = [int(x) for x in list(params_all_districts.keys())]
     
     for district in districts:
+        print(f"    Simulating district: {district}")
         params = params_all_districts[district]
         
         # Get number of students in this district
@@ -334,6 +346,7 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
         schools_list = params['schools']
         school_to_global_idx = {s: i for i, s in enumerate(schools_list)}
         
+        print(f" Generating rankings for {n_students} students of length {k_ranking_length} amongst {len(schools_list)} schools")
         rankings = sample_mallows_mixture(
             [np.array([school_to_global_idx[s] for s in cr]) for cr in params['central_rankings']],
             params['phis'],
@@ -371,7 +384,8 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
     # Get capacities
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    
+    print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}")
+
     # Run Gale-Shapley
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
@@ -390,7 +404,7 @@ def find_valid_parameters(df, match_stats_df, school_info_df,
     
     np.random.seed(seed)
     
-    districts = df['Residential District'].unique()
+    districts = sorted(df['Residential District'].unique())
     
     n_total_students = int(match_stats_df['Total Applicants'].sum())
     lottery_global = np.random.permutation(n_total_students)
@@ -410,6 +424,7 @@ def find_valid_parameters(df, match_stats_df, school_info_df,
         
         # Sample random parameters
         params = sample_random_parameters(districts, df, K)
+        print(f"  Sampled parameters, running GoF test")
         
         # Test goodness of fit
         p_values = goodness_of_fit_test(params, df, match_stats_df, school_info_df, 
@@ -448,8 +463,8 @@ df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_
 
 params, p_values, lottery = find_valid_parameters(
     df, match_stats_df, school_info_df,
-    n_attempts=20,
-    m=30,
-    K=2,
+    n_attempts=5,
+    m=5,
+    K=1,
     seed=GLOBAL_SEED
 )

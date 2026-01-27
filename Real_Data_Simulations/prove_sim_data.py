@@ -118,6 +118,7 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
                     matches[student] = school
                     break
     
+
     return matches
 
 def read_data(file_path, sheet=0):
@@ -179,6 +180,12 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
     
     n_students_district = int(match_row['Total Applicants'])
     schools_list = df_district['School DBN'].values
+
+    rankable_schools = [s for s in schools_list if obs_total_app.get(s, 0) > 0]
+    rankable_indices = [i for i, s in enumerate(schools_list) if obs_total_app.get(s, 0) > 0]
+    print(f"  {len(rankable_schools)} out of {len(schools_list)} schools were actually ranked")
+
+    print(f"  District 1 can rank {len(schools_list)} schools")
     school_to_idx = {s: i for i, s in enumerate(schools_list)}
     
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
@@ -187,6 +194,8 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
     student_start = int(match_stats_df.iloc[:district_id]['Total Applicants'].sum())
     student_end = student_start + n_students_district
     lottery_district = lottery_fixed[student_start:student_end]
+
+    print(f"  District has {n_students_district} students applying to {len(schools_list)} schools")
     
     eval_count = [0]
     found_solution = [False]
@@ -217,6 +226,7 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
         
         for _ in range(M):
             rankings = sample_mallows_mixture(central_rankings, phis, mixture_weights, n_students_district)
+            rankings = [r[:8] for r in rankings]
             
             rankings_as_schools = []
             for r in rankings:
@@ -224,6 +234,9 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
             
             matches_idx = gale_shapley(rankings, lottery_district, capacities)
             matches_schools = np.array([schools_list[m] if m >= 0 else '-1' for m in matches_idx])
+
+            num_matched = np.sum(matches_idx >= 0)
+            print(f"  Matched: {num_matched}/{n_students_district} students")
             
             district_assignments = np.array([district_name] * n_students_district)
             
@@ -233,6 +246,11 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
             total_app_samples.append(agg['total_app'][0, :])
             true_app_samples.append(agg['true_app'][0, :])
             match_stats_samples.append(agg['match_stats'][0, :])
+
+            print(f"  Total apps simulated: {np.sum(agg['total_app'])}")
+            print(f"  Total apps observed: {sum(obs_total_app.values())}")
+            print(f"  True apps simulated: {np.sum(agg['true_app'])}")
+            print(f"  True apps observed: {sum(obs_true_app.values())}")
         
         exp_total = np.mean(total_app_samples, axis=0)
         exp_true = np.mean(true_app_samples, axis=0)
@@ -241,17 +259,22 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
         pct_errors = []
         for s in obs_total_app.keys():
             if obs_total_app[s] > 0:
-                pct_errors.append(abs(exp_total[school_to_idx[s]] - obs_total_app[s]) / obs_total_app[s])
-        
+                err = abs(exp_total[school_to_idx[s]] - obs_total_app[s]) / obs_total_app[s]
+                pct_errors.append((err, f"total_app[{s}]", obs_total_app[s], exp_total[school_to_idx[s]]))
+
         for s in obs_true_app.keys():
             if obs_true_app[s] > 0:
-                pct_errors.append(abs(exp_true[school_to_idx[s]] - obs_true_app[s]) / obs_true_app[s])
-        
+                err = abs(exp_true[school_to_idx[s]] - obs_true_app[s]) / obs_true_app[s]
+                pct_errors.append((err, f"true_app[{s}]", obs_true_app[s], exp_true[school_to_idx[s]]))
+
         for i in range(4):
             if obs_match_stats[i] > 0:
-                pct_errors.append(abs(exp_match[i] - obs_match_stats[i]) / obs_match_stats[i])
-        
-        max_pct_error = max(pct_errors) if pct_errors else 0
+                names = ['top3%', 'top5%', 'top10%', 'unmatched%']
+                err = abs(exp_match[i] - obs_match_stats[i]) / obs_match_stats[i]
+                pct_errors.append((err, names[i], obs_match_stats[i], exp_match[i]))
+
+        pct_errors.sort(reverse=True)
+        max_pct_error = pct_errors[0][0] if pct_errors else 0 
         
         if max_pct_error <= 0.05:
             found_solution[0] = True
@@ -274,7 +297,14 @@ def create_district_objective(district_id, df, match_stats_df, school_info_df,
         
         if eval_count[0] % 10 == 0:
             print(f"    Eval {eval_count[0]}: error={total_error:.2f}, max%err={max_pct_error*100:.1f}%")
+            print(f"    Top 5 errors:")
+            for i in range(min(5, len(pct_errors))):
+                err, name, obs, sim = pct_errors[i]
+                print(f"      {name}: {err*100:.1f}% (obs={obs:.1f}, sim={sim:.1f})")
         
+        print(f"\n  Generated {len(rankings)} rankings")
+        print(f"  Sample ranking: {rankings[0][:5]}") 
+
         return total_error
     
     return objective, schools_list, found_solution
@@ -292,6 +322,10 @@ def optimize_district(district_id, df, match_stats_df, school_info_df,
     
     popularity = df_district.set_index('School DBN')['Rank'].to_dict()
     initial_ranking = sorted(schools_list, key=lambda s: popularity.get(s, 999))
+
+    popularity = df_district.set_index('School DBN')['Total Applicants by Residential District'].to_dict()
+    initial_ranking = sorted(schools_list, key=lambda s: -popularity.get(s, 0))
+
     initial_ranking_idx = np.array([i for i, _ in enumerate(initial_ranking)])
     
     initial_params = []
@@ -299,7 +333,7 @@ def optimize_district(district_id, df, match_stats_df, school_info_df,
         noise = np.random.randn(n_schools) * 0.3
         initial_params.extend(initial_ranking_idx + noise)
     
-    initial_params.extend([0.5] * K)
+    initial_params.extend([0.0] * K)
     initial_params.extend([1.0/K] * K)
     initial_params = np.array(initial_params)
     

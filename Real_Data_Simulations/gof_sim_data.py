@@ -178,6 +178,9 @@ def preprocess_data(df, match_stats_df, school_info_df):
     match_stats_df = match_stats_df[~match_stats_df['Residential District'].isin(['Total', 'Unknown '])]
     match_stats_df['Residential District'] = pd.to_numeric(match_stats_df['Residential District'])
     
+    avg_list_length = df['Total Applicants by Residential District'].sum() / match_stats_df['Total Applicants'].sum()
+    print(f"Average list length from data: {avg_list_length:.2f}")
+    
     return df, match_stats_df, school_info_df
 
 def mallows_insertion_sampling(central_ranking, phi):
@@ -323,15 +326,15 @@ def sample_random_parameters(districts, df, K=2):
         
         central_rankings = []
         for k in range(K):
-            # Add small random permutation
-            perm_indices = np.arange(n_schools)
-            np.random.shuffle(perm_indices[:20])  # Shuffle only top 20
-            ranking = [initial_ranking[i] for i in perm_indices]
+            ranking = initial_ranking.copy() 
+            top_20 = ranking[:20]
+            np.random.shuffle(top_20)
+            ranking[:20] = top_20
             central_rankings.append(ranking)
         
         # Sample phis from Beta(2, 8) - concentrates around 0.2
-        phis = np.random.beta(2, 8, K)
-        phis = np.clip(phis, 0.05, 0.5)
+        phis = np.random.beta(4, 6, K)
+        phis = np.clip(phis, 0.1, 0.8)
         
         # Sample mixture weights from Dirichlet
         mixture_weights = np.random.dirichlet([1]*K)
@@ -408,7 +411,7 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
     # Get capacities
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}")
+    print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}, Total students: {len(all_rankings)}")
 
     # Run Gale-Shapley
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)

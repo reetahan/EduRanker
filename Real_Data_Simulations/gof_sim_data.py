@@ -302,7 +302,7 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
                     matches[student] = school
                     break
     
-
+    
     return matches
 
 def sample_random_parameters(districts, df, K=2):
@@ -335,13 +335,14 @@ def sample_random_parameters(districts, df, K=2):
         
         # Sample mixture weights from Dirichlet
         mixture_weights = np.random.dirichlet([1]*K)
-        
+        print(f"  District {district}: sampled phis = {phis}")
         params[district] = {
             'schools': schools_list,
             'central_rankings': central_rankings,
             'phis': phis,
             'mixture_weights': mixture_weights
         }
+    
     
     return params
 
@@ -412,7 +413,22 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
     # Run Gale-Shapley
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
-    
+
+    num_matched = np.sum(matches_idx >= 0)
+    num_unmatched = np.sum(matches_idx == -1)
+    print(f"    Matched: {num_matched}/{len(matches_idx)}, Unmatched: {num_unmatched}")
+
+    # Check distribution of matches
+    if num_matched > 0:
+        match_positions = []
+        for i, ranking in enumerate(rankings_as_indices):
+            if matches_idx[i] >= 0:
+                match_pos = np.where(ranking == matches_idx[i])[0]
+                if len(match_pos) > 0:
+                    match_positions.append(match_pos[0])
+        if match_positions:
+            print(f"    Match position distribution: 1st={sum(p==0 for p in match_positions)}, 2nd={sum(p==1 for p in match_positions)}, 3rd={sum(p==2 for p in match_positions)}")
+        
     # Compute aggregates
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
@@ -490,8 +506,8 @@ df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_
 
 params, p_values, lottery = find_valid_parameters(
     df, match_stats_df, school_info_df,
-    n_attempts=5,
-    m=2,
+    n_attempts=1,
+    m=1,
     K=1,
     seed=GLOBAL_SEED
 )

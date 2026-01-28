@@ -46,7 +46,7 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
     p_values = {}
     
     for district in districts:
-        
+        print(f"\n  District {district}:")
         obs_match = match_stats_df[match_stats_df['Residential District'] == district].iloc[0]
         obs_match_vec = np.array([
             obs_match['% Matches to Choice 1-3'],
@@ -60,16 +60,22 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
         # Use chi-squared test on the distribution
         mean_sim = np.mean(sim_match_dist, axis=0)
         
-        # Normalize both to sum to 100 (handle rounding errors)
-        obs_match_vec = obs_match_vec / obs_match_vec.sum() * 100
-        mean_sim = mean_sim / mean_sim.sum() * 100
-        
         # Avoid division by zero
         mean_sim = np.clip(mean_sim, 0.1, None)
+        obs_match_vec = np.clip(obs_match_vec, 0.1, None)
+
+        # Normalize both to sum to 100 (handle rounding errors)
+        obs_sum = obs_match_vec.sum()
+        sim_sum = mean_sim.sum()
+        obs_match_vec = obs_match_vec / obs_sum * sim_sum  # Scale obs to match sim's sum
         
         _, p_val = chisquare(obs_match_vec, mean_sim)
         
+        
         p_values[f'{district}_match_distribution'] = p_val
+        print(f"    Match stats p-value: {p_val:.4f}")  
+        if p_val < 0.05:  
+            print(f"      FAILED: obs={obs_match_vec}, sim={mean_sim}")
         
         # Apps (scaled to simulation size)
         df_district = df[df['Residential District'] == district]
@@ -77,30 +83,58 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
         obs_total_vec = df_district['Total Applicants by Residential District'].values
         obs_true_vec = df_district['True Applicants by Residential District'].values
         
-        sim_total_array = np.array(sim_total_apps[district])  # m × n_schools
-        sim_true_array = np.array(sim_true_apps[district])    # m × n_schools
+        sim_total_array = np.array(sim_total_apps[district])  
+        sim_true_array = np.array(sim_true_apps[district])   
+
+        all_schools = df['School DBN'].unique()
+        schools_in_district = df_district['School DBN'].values
+        school_indices = [np.where(all_schools == s)[0][0] for s in schools_in_district]
+        
+        sim_total_array = sim_total_array[:, school_indices] 
+        sim_true_array = sim_true_array[:, school_indices] 
         
         mean_sim_total = np.mean(sim_total_array, axis=0)
         mean_sim_true = np.mean(sim_true_array, axis=0)
         
         mean_sim_total = np.clip(mean_sim_total, 0.1, None)
         mean_sim_true = np.clip(mean_sim_true, 0.1, None)
+        obs_total_vec = np.clip(obs_total_vec, 0.1, None)
+        obs_true_vec = np.clip(obs_true_vec, 0.1, None)
+        
+        obs_total_vec = obs_total_vec / obs_total_vec.sum() * mean_sim_total.sum()
+        obs_true_vec = obs_true_vec / obs_true_vec.sum() * mean_sim_true.sum()
+        
         
         _, p_val_total = chisquare(obs_total_vec, mean_sim_total)
         _, p_val_true = chisquare(obs_true_vec, mean_sim_true)
         
         p_values[f'{district}_total_apps'] = p_val_total
         p_values[f'{district}_true_apps'] = p_val_true
+        print(f"    Total apps p-value: {p_val_total:.4f}")  
+        print(f"    True apps p-value: {p_val_true:.4f}")  
+        if p_val_total < 0.05:  
+            print(f"      FAILED total: top 5 obs={obs_total_vec[:5]}, sim={mean_sim_total[:5]}")  
+        if p_val_true < 0.05:  
+            print(f"      FAILED true: top 5 obs={obs_true_vec[:5]}, sim={mean_sim_true[:5]}")  
     
-    # School utilization (global)
+    
     obs_filled = df.groupby('School DBN')['Total True Applicants School'].first().values
     sim_util_array = np.array(sim_utilization)  # m × s
     
     mean_sim = np.mean(sim_util_array, axis=0)
+    
+    # Clip first
     mean_sim = np.clip(mean_sim, 0.1, None)
+    obs_filled = np.clip(obs_filled, 0.1, None)
+    
+    # Normalize to match sums
+    obs_filled = obs_filled / obs_filled.sum() * mean_sim.sum()
     
     _, p_val = chisquare(obs_filled, mean_sim)
     p_values['utilization'] = p_val
+    print(f"\n  Utilization p-value: {p_val:.4f}")  
+    if p_val < 0.05:  
+        print(f"    FAILED: top 10 obs={obs_filled[:10]}, sim={mean_sim[:10]}")
     
     return p_values
 
@@ -422,11 +456,15 @@ def find_valid_parameters(df, match_stats_df, school_info_df,
         min_p_value = min(p_values.values())
         print(f"  Min p-value: {min_p_value:.4f}")
         print(f"  Failed constraints: {sum(1 for p in p_values.values() if p < 0.05)}/{len(p_values)}")
-        
+        print(f"  Worst 3 constraints:")
+        sorted_pvals = sorted(p_values.items(), key=lambda x: x[1]) 
+        for name, pval in sorted_pvals[:3]: 
+            print(f"    {name}: {pval:.4f}") 
+
         if min_p_value > best_min_p_value:
             best_min_p_value = min_p_value
             best_params = params
-            print(f"  ✓ New best!")
+            print(f"New best min p-value found: {best_min_p_value:.4f}")
         
         # Check if all p-values acceptable
         if all(p > 0.05 for p in p_values.values()):

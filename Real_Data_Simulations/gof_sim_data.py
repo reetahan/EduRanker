@@ -180,7 +180,7 @@ def preprocess_data(df, match_stats_df, school_info_df):
     
     avg_list_length = df['Total Applicants by Residential District'].sum() / match_stats_df['Total Applicants'].sum()
     print(f"Average list length from data: {avg_list_length:.2f}")
-    
+     
     return df, match_stats_df, school_info_df
 
 def mallows_insertion_sampling(central_ranking, phi):

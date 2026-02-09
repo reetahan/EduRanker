@@ -140,9 +140,12 @@ def goodness_of_fit_test(params_all_districts, df, match_stats_df, school_info_d
 
 def read_data(file_path, sheet=0):
     """
-    Reads Excel data from the given file path and returns a pandas DataFrame.
+    Reads data from the given file path and returns a pandas DataFrame.
     """
-    data = pd.read_excel(file_path, sheet_name=sheet)
+    if file_path.endswith('.csv'):
+        data = pd.read_csv(file_path)
+    else:
+        data = pd.read_excel(file_path, sheet_name=sheet)
     return data
 
 
@@ -498,7 +501,9 @@ def find_valid_parameters(df, match_stats_df, school_info_df,
     
     return best_params, None, lottery_global
 
-df = read_data('data/master_data_03_residential_district.xlsx')
+#df = read_data('data/master_data_03_residential_district.xlsx')
+RES_SEED =  25559
+df = read_data(f'data/master_data_04_residential_district_random_imputations/imputed_seed_{RES_SEED}.csv')
 match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
                            sheet='Match to Choice-District')
 

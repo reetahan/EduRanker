@@ -87,7 +87,7 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     
     total_app = np.zeros((n_districts, n_schools))
     true_app = np.zeros((n_districts, n_schools))
-    match_stats = np.zeros((n_districts, 4))
+    match_stats = np.zeros((n_districts, 7))
     filled = np.zeros(n_schools)
     
     for student_id in range(n_students):
@@ -129,11 +129,13 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
             
             match_stats[district_idx, 3] += 1
     
-    # FIX: Convert ALL 4 values to percentages
+
     for d in range(n_districts):
-        district_total = np.sum(match_stats[d, :])
+        # Count total students in this district
+        district_total = np.sum(district_assignments == districts[d])
+        
         if district_total > 0:
-            match_stats[d, :] = (match_stats[d, :] / district_total) * 100  # ← Changed from :3 to :
+            match_stats[d, :] = (match_stats[d, :] / district_total) * 100
     
     return {
         'total_app': total_app,
@@ -253,10 +255,26 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
                     match_positions.append(match_pos[0])
         if match_positions:
             print(f"    Match position distribution: 1st={sum(p==0 for p in match_positions)}, 2nd={sum(p==1 for p in match_positions)}, 3rd={sum(p==2 for p in match_positions)}")
-    
+
+        print(f"\n>>> MATCH POSITION DEBUG:")
+        print(f">>> Position 0 (1st): {sum(p==0 for p in match_positions)}")
+        print(f">>> Position 1 (2nd): {sum(p==1 for p in match_positions)}")
+        print(f">>> Position 2 (3rd): {sum(p==2 for p in match_positions)}")
+        print(f">>> Position 3-4: {sum(3<=p<5 for p in match_positions)}")
+        print(f">>> Position 5-9: {sum(5<=p<10 for p in match_positions)}")
+        print(f">>> Position 10-11: {sum(10<=p<12 for p in match_positions)}")
+        print(f">>> Total matched: {len(match_positions)}")
+        print(f">>> Total unmatched: {num_unmatched}\n")
+
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
     
+    print(f"\n>>> SIMULATION SANITY CHECK:")
+    print(f">>> Total students simulated: {len(all_rankings)}")
+    print(f">>> Sample ranking from first student: {all_rankings[0]}")
+    print(f">>> Sample ranking from the 42nd student: {all_rankings[41]}")
+    print(f">>> Match stats shape: {agg['match_stats'].shape}")
+    print(f">>> Match stats raw values:\n{agg['match_stats']}")
     return agg
 
 def continuous_to_permutation(sigma_continuous, schools):
@@ -495,13 +513,11 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         )
         
         # Compute total log-likelihood
-        total_log_lik = 0
-        for district in districts:
-            district_log_lik = compute_log_likelihood_gaussian(
-                params, observed_agg[district], district,
-                df, match_stats_df, school_info_df, M=M_simulations
-            )
-            total_log_lik += district_log_lik
+        print("\n  Computing final log-likelihood at optimized parameters...")
+        total_log_lik = compute_log_likelihood_gaussian_all_districts(
+            params, observed_agg, df, match_stats_df, 
+            school_info_df, M=M_simulations
+        )
         
         log_likelihoods.append(total_log_lik)
         print(f"\nTotal log-likelihood: {total_log_lik:.2f}")
@@ -596,6 +612,124 @@ def sample_students_global_mixture(params, district, n_students):
     
     return rankings
 
+def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
+                                                   df, match_stats_df, school_info_df,
+                                                   M=1):
+    """
+    Compute log-likelihood for ALL districts at once
+    
+    This is more efficient than calling compute_log_likelihood_gaussian() 
+    separately for each district because we only run M simulations total
+    instead of M x num_districts simulations.
+    
+    Returns:
+        total_log_lik: Sum of log-likelihoods across all districts
+    """
+    
+    districts = sorted(observed_agg.keys())
+    n_students_total = int(match_stats_df['Total Applicants'].sum())
+    
+    # Run M simulations, collecting stats for all districts
+    simulated_samples = {d: [] for d in districts}
+    
+    for sim in range(M):
+        if sim % 5 == 0:
+            print(f"      Simulation {sim+1}/{M}...", end='\r')
+        
+        # Create fresh lottery
+        lottery_sim = np.random.permutation(n_students_total)
+        
+        # Simulate ALL districts together (do this ONCE per M iteration)
+        agg = run_single_simulation(
+            params_global, df, match_stats_df, school_info_df, 
+            lottery_sim, k_ranking_length=12
+        )
+        
+        # Extract stats for EACH district from this single simulation
+        for d_idx, district in enumerate(districts):
+            agg_vec = agg['match_stats'][d_idx, :]
+            simulated_samples[district].append(agg_vec)
+    
+    print()  # New line after progress indicator
+    
+    print("\n" + "="*60)
+    print("FIT DIAGNOSTICS")
+    print("="*60)
+    
+    for d_idx, district in enumerate(districts):  
+        obs = observed_agg[district]['match_stats']
+        sim = agg['match_stats'][d_idx, :]
+        
+        print(f"\nDistrict {district}:")
+        print(f"  Observed:  top3={obs[0]:5.1f}%, top5={obs[1]:5.1f}%, top10={obs[2]:5.1f}%, unmatched={obs[3]:5.1f}%")
+        print(f"  Simulated: top3={sim[0]:5.1f}%, top5={sim[1]:5.1f}%, top10={sim[2]:5.1f}%, unmatched={sim[3]:5.1f}%")
+        print(f"  Difference: top3={obs[0]-sim[0]:+5.1f}, top5={obs[1]-sim[1]:+5.1f}, top10={obs[2]-sim[2]:+5.1f}, unmatched={obs[3]-sim[3]:+5.1f}")
+    
+    print("="*60 + "\n")
+    # Now compute likelihood for each district separately
+    total_log_lik = 0
+    
+    for district in districts:
+        X = np.array(simulated_samples[district])  # M × 4 array
+        
+        # Check for valid data
+        if len(X) == 0 or np.any(np.isnan(X)) or np.any(np.isinf(X)):
+            print(f"      Warning: Invalid data for district {district}")
+            continue
+        
+        # Estimate mean and covariance
+        mu = np.mean(X, axis=0)
+        
+        if M > 1:
+            Sigma = np.cov(X, rowvar=False)
+            
+            # Handle different dimensionalities
+            if Sigma.ndim == 0:  # Scalar
+                Sigma = np.array([[Sigma]])
+            elif Sigma.ndim == 1:  # 1D
+                Sigma = np.diag(Sigma)
+            
+            # Add regularization for numerical stability
+            regularization = 1e-3 * np.eye(len(Sigma))
+            Sigma = Sigma + regularization
+            
+            # Check for singularity
+            try:
+                np.linalg.cholesky(Sigma)
+            except np.linalg.LinAlgError:
+                Sigma = Sigma + 1e-2 * np.eye(len(Sigma))
+        else:
+            # Not enough samples for covariance
+            Sigma = 1e-2 * np.eye(4)
+        
+        # Get observed vector
+        obs_vec = observed_agg[district]['match_stats']
+        
+        # Compute Mahalanobis distance
+        try:
+            diff = obs_vec - mu
+            inv_Sigma = np.linalg.inv(Sigma)
+            mahalanobis_sq = diff @ inv_Sigma @ diff
+            
+            # Log-likelihood (unnormalized)
+            log_lik = -0.5 * mahalanobis_sq
+            
+            # Sanity check
+            if np.isnan(log_lik) or np.isinf(log_lik):
+                print(f"      Warning: Invalid log-likelihood for district {district}")
+                log_lik = -1e10
+                
+        except Exception as e:
+            print(f"      Warning: Likelihood computation failed for district {district}: {e}")
+            
+            # Fall back to simple MSE
+            mse = np.mean((obs_vec - mu)**2)
+            log_lik = -mse * 100
+        
+        total_log_lik += log_lik
+    
+    return total_log_lik
+
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20):
     
@@ -657,6 +791,6 @@ if __name__ == "__main__":
     params, lottery, log_likelihoods = EM_algorithm(
         df, match_stats_df, school_info_df,
         max_iter=5,
-        M_simulations=5,
+        M_simulations=1,
         K=12
     )

@@ -3,6 +3,7 @@ import numpy as np
 from scipy.stats import multivariate_normal
 from scipy.optimize import minimize_scalar
 import copy
+import sys
 
 GLOBAL_SEED = 42
 
@@ -173,7 +174,7 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
 
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global, k_ranking_length=8):
+                         lottery_global, k_ranking_length=12):
     """
     Run one simulation with GLOBAL MIXTURE parameters
     
@@ -352,7 +353,7 @@ def compute_log_likelihood_gaussian(params_global, observed_agg, district,
         agg = run_single_simulation(
             params_all, df, match_stats_df, school_info_df, 
             lottery_sim,
-            k_ranking_length=8
+            k_ranking_length=12
         )
         
         # Extract aggregates for the TARGET district only
@@ -435,7 +436,6 @@ def compute_log_likelihood_gaussian(params_global, observed_agg, district,
     
     return log_lik
 
-
 def EM_algorithm(df, match_stats_df, school_info_df,
                  max_iter=10, tol=0.01, K=1, M_simulations=20, seed=GLOBAL_SEED):
     """
@@ -461,6 +461,21 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     
     # Initialize with GLOBAL mixture
     params = initialize_parameters_global_mixture(districts, df, K)
+
+    print("\n" + "="*60)
+    print("PARAMETER STRUCTURE")
+    print("="*60)
+    print(f"Global phis: {params['global_phis']}")
+    print(f"Global weights: {params['global_weights']}")
+    print("\nDistrict-specific central rankings:")
+    for district in list(params['districts'].keys())[:3]:
+        sigma_d = params['districts'][district]['central_ranking']
+        schools_d = params['districts'][district]['schools']
+        print(f"\nDistrict {district}:")
+        print(f"  # Schools: {len(schools_d)}")
+        print(f"  Top 5 in ranking: {sigma_d[:5]}")
+    print("="*60 + "\n")
+
     observed_agg = extract_observed_aggregates(df, match_stats_df)
     
     log_likelihoods = []
@@ -517,12 +532,12 @@ def EM_algorithm(df, match_stats_df, school_info_df,
 
 def initialize_parameters_global_mixture(districts, df, K=1):
     """
-    Initialize with global φs, district-specific σs
+    Initialize with global phis, district-specific sigmas
     """
     
     # Global mixture parameters (shared across districts)
-    global_phis = np.random.beta(2, 8, K)
-    global_phis = np.clip(global_phis, 0.1, 0.7)
+    global_phis = np.random.beta(5, 1, K)
+    global_phis = np.clip(global_phis, 0.75, 0.99)
     
     global_weights = np.ones(K) / K  # Uniform initially
     
@@ -537,9 +552,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
         df_district = df[df['Residential District'] == district]
         schools_list = df_district['School DBN'].values
         
-        obs_total = df_district.set_index('School DBN')[
-            'Total Applicants by Residential District'
-        ].to_dict()
+        obs_total = df_district.set_index('School DBN')['Ratio'].to_dict()
         
         central_ranking = sorted(schools_list, key=lambda s: -obs_total.get(s, 0))
         
@@ -585,57 +598,34 @@ def sample_students_global_mixture(params, district, n_students):
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20):
-    """
-    Optimize global φs (keeping district σs fixed)
-    """
     
     K = len(params['global_phis'])
-    districts = list(params['districts'].keys())
     
     print("\n  Optimizing global mixture parameters...")
     
-    # Optimize each global φ_k
     new_phis = []
     
     for k in range(K):
-        print(f"    Optimizing global φ_{k}...")
+        print(f"\n    Optimizing global φ_{k}...")
         
         phi_k_current = params['global_phis'][k]
         
         def objective_global_phi_k(phi):
-            """Objective for global φ_k"""
+            """Negative log-likelihood for global φ_k"""
             
-            # Update params
             params_test = copy.deepcopy(params)
             params_test['global_phis'][k] = phi
             
-            # Simulate ALL districts
-            lottery = np.random.permutation(
-                int(match_stats_df['Total Applicants'].sum())
+            # Compute log-likelihood for ALL districts at once
+            total_log_lik = compute_log_likelihood_gaussian_all_districts(
+                params_test, observed_agg, df, match_stats_df, 
+                school_info_df, M=M
             )
             
-            agg = run_single_simulation(
-                params_test, df, match_stats_df, school_info_df, 
-                lottery, k_ranking_length=8
-            )
-            
-            # Compute total log-likelihood across all districts
-            total_log_lik = 0
-            
-            for d_idx, district in enumerate(districts):
-                obs = observed_agg[district]['match_stats']
-                sim = agg['match_stats'][d_idx, :]
-                
-                # Simple MSE-based likelihood
-                diff = obs - sim
-                log_lik_d = -np.sum(diff ** 2)
-                total_log_lik += log_lik_d
-            
-            print(f"      phi_{k}={phi:.4f}, total_log_lik={total_log_lik:.2f}")
+            print(f"      phi_{k}={phi:.4f}, log_lik={total_log_lik:.2f}")
             
             return -total_log_lik
         
-        # Optimize
         result = minimize_scalar(
             objective_global_phi_k,
             bounds=(0.05, 0.95),
@@ -650,217 +640,23 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     params['global_phis'] = np.array(new_phis)
     
-    
     return params
 
 
-def create_toy_dataset(n_districts=3, n_schools_per_district=10, n_students_per_district=100, capacity_ratio=0.95):
-    """
-    Create a minimal toy dataset for testing EM algorithm
-    
-    Key constraint: Total capacity ≈ Total students (realistic market)
-    
-    Args:
-        n_districts: Number of districts (default 3)
-        n_schools_per_district: Schools per district (default 10)
-        n_students_per_district: Students per district (default 100)
-        capacity_ratio: Ratio of total capacity to total students (default 0.95 = 5% unmatched)
-    
-    Returns:
-        df, match_stats_df, school_info_df (toy versions)
-    """
-    
-    print("="*60)
-    print("CREATING TOY DATASET")
-    print("="*60)
-    print(f"  Districts: {n_districts}")
-    print(f"  Schools per district: {n_schools_per_district}")
-    print(f"  Students per district: {n_students_per_district}")
-    print(f"  Capacity ratio: {capacity_ratio:.2f} ({100*(1-capacity_ratio):.1f}% expected unmatched)")
-    
-    total_schools = n_districts * n_schools_per_district
-    total_students = n_districts * n_students_per_district
-    
-    print(f"  Total schools: {total_schools}")
-    print(f"  Total students: {total_students}")
-    
-    # Calculate target capacity based on ratio
-    target_total_capacity = int(total_students * capacity_ratio)
-    avg_capacity_per_school = target_total_capacity // total_schools
-    
-    print(f"  Target total capacity: {target_total_capacity}")
-    print(f"  Avg capacity per school: {avg_capacity_per_school}")
-    print()
-    
-    # Create schools
-    schools_data = []
-    school_counter = 0
-    capacities = []
-    
-    for district in range(1, n_districts + 1):
-        for i in range(n_schools_per_district):
-            school_id = f"SCHOOL_{school_counter:03d}"
-            school_counter += 1
-            
-            # Vary capacity around average (±30%)
-            capacity = int(avg_capacity_per_school * np.random.uniform(0.7, 1.3))
-            capacity = max(capacity, 1)  # At least 1 seat
-            
-            capacities.append(capacity)
-            
-            schools_data.append({
-                'School DBN': school_id,
-                'School Name': f'School {school_id}',
-                'School District': district,
-                'Residential District': district,
-                'Capacity': capacity
-            })
-    
-    # Adjust capacities to sum to target
-    current_total = sum(capacities)
-    adjustment_factor = target_total_capacity / current_total
-    
-    for i, school in enumerate(schools_data):
-        school['Capacity'] = int(capacities[i] * adjustment_factor)
-        school['Capacity'] = max(school['Capacity'], 1)
-    
-    # Final adjustment to exactly hit target
-    actual_total = sum(s['Capacity'] for s in schools_data)
-    diff = target_total_capacity - actual_total
-    
-    if diff != 0:
-        largest_idx = np.argmax([s['Capacity'] for s in schools_data])
-        schools_data[largest_idx]['Capacity'] += diff
-        schools_data[largest_idx]['Capacity'] = max(schools_data[largest_idx]['Capacity'], 1)
-    
-    school_info_df = pd.DataFrame(schools_data)[['School DBN', 'Capacity']]
-    
-    final_capacity = sum(s['Capacity'] for s in schools_data)
-    print(f"Final total capacity: {final_capacity}")
-    print(f"Capacity shortfall: {total_students - final_capacity} students ({100*(total_students - final_capacity)/total_students:.1f}%)")
-    print()
-    
-    # Create application data
-    app_data = []
-    
-    for res_district in range(1, n_districts + 1):
-        for school in schools_data:
-            school_district = school['Residential District']
-            
-            # Home bias in applications
-            if school_district == res_district:
-                base_rate = np.random.uniform(0.3, 0.5)
-            else:
-                base_rate = np.random.uniform(0.05, 0.15)
-            
-            total_apps = int(n_students_per_district * base_rate)
-            total_apps = max(total_apps, 1)
-            
-            true_apps = int(total_apps * np.random.uniform(0.5, 1.0))
-            true_apps = max(true_apps, 1)
-            
-            app_data.append({
-                'School DBN': school['School DBN'],
-                'School Name': school['School Name'],
-                'School District': school['School District'],
-                'Residential District': res_district,
-                'Total Applicants by Residential District': total_apps,
-                'True Applicants by Residential District': true_apps,
-                'Total Applicants School': total_apps,
-                'Total True Applicants School': true_apps,
-                'Ratio': (true_apps ** 2) / max(total_apps, 1),
-                'Rank': 0
-            })
-    
-    df = pd.DataFrame(app_data)
-    
-    total_apps_generated = df.groupby('Residential District')['Total Applicants by Residential District'].sum()
-    avg_list_length = total_apps_generated.mean() / n_students_per_district
-    
-    print(f"Average applications per student: {avg_list_length:.1f}")
-    print()
-    
-    # Create match statistics
-    match_stats_data = []
-    
-    # Expected unmatched rate based on capacity
-    expected_unmatched = 100 * (1 - capacity_ratio)
-    
-    for district in range(1, n_districts + 1):
-        # Top-3: 25-35%
-        top3 = np.random.uniform(25, 35)
-        
-        # Top-5: top3 + 15-25%
-        top5 = top3 + np.random.uniform(15, 25)
-        
-        # Top-10: top5 + 20-35%
-        top10 = top5 + np.random.uniform(20, 35)
-        
-        # Unmatched: around expected rate ± 2%
-        unmatched = expected_unmatched + np.random.uniform(-2, 2)
-        unmatched = max(unmatched, 0.5)  # At least 0.5%
-        
-        # Ensure consistency
-        if top10 + unmatched > 98:
-            top10 = 98 - unmatched
-        
-        match_stats_data.append({
-            'Residential District': district,
-            'Total Applicants': n_students_per_district,
-            '% Matches to Choice 1-3': top3,
-            '% Matches to Choice 1-5': top5,
-            '% Matches to Choice 1-10': top10,
-            'Unmatched': unmatched
-        })
-    
-    match_stats_df = pd.DataFrame(match_stats_data)
-    
-    # Print summary
-    print("="*60)
-    print("TOY DATASET SUMMARY")
-    print("="*60)
-    print(f"Total students: {total_students}")
-    print(f"Total capacity: {final_capacity}")
-    print(f"Capacity/Students ratio: {final_capacity/total_students:.3f}")
-    print(f"Expected unmatched: ~{100*(1 - final_capacity/total_students):.1f}%")
-    print(f"Avg applications per student: {avg_list_length:.1f}")
-    print()
-    print("Match statistics by district:")
-    for _, row in match_stats_df.iterrows():
-        print(f"  District {int(row['Residential District'])}: "
-              f"top3={row['% Matches to Choice 1-3']:.1f}%, "
-              f"top5={row['% Matches to Choice 1-5']:.1f}%, "
-              f"unmatched={row['Unmatched']:.1f}%")
-    print("="*60)
-    print()
-    
-    return df, match_stats_df, school_info_df
-
 if __name__ == "__main__":
     
-    import sys
     
-    if len(sys.argv) > 1 and sys.argv[1] == '--toy':
-        print("USING TOY DATASET")
-        df, match_stats_df, school_info_df = create_toy_dataset(
-            n_districts=3,
-            n_schools_per_district=10,
-            n_students_per_district=100,
-            capacity_ratio=0.98
-        )
-    else:
-        print("USING REAL DATASET")
-        df = read_data('data/master_data_03_residential_district.xlsx')
-        match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
-                                   sheet='Match to Choice-District')
-        school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
-                                sheet='Data')
-        df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df)
+    df = read_data('data/master_data_03_residential_district.xlsx')
+    match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
+                                sheet='Match to Choice-District')
+    school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
+                            sheet='Data')
+    df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df)
     
     # Run EM
     params, lottery, log_likelihoods = EM_algorithm(
         df, match_stats_df, school_info_df,
         max_iter=5,
         M_simulations=5,
-        K=3
+        K=12
     )

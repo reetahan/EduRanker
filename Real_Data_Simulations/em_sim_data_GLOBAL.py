@@ -75,18 +75,6 @@ def mallows_insertion_sampling(central_ranking, phi):
     return np.array(ranking)
 
 
-def sample_mallows_mixture(central_rankings, phis, mixture_weights, n_samples):
-    K = len(central_rankings)
-    rankings = []
-    
-    for _ in range(n_samples):
-        component = np.random.choice(K, p=mixture_weights)
-        ranking = mallows_insertion_sampling(central_rankings[component], phis[component])
-        rankings.append(ranking)
-    
-    return rankings
-
-
 def compute_aggregates(student_rankings, matches, district_assignments, schools_list):
     n_students = len(student_rankings)
     n_schools = len(schools_list)
@@ -184,39 +172,51 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
     return matches
 
 
-def run_single_simulation(params_all_districts, df, match_stats_df, school_info_df, 
+def run_single_simulation(params, df, match_stats_df, school_info_df, 
                          lottery_global, k_ranking_length=8):
     """
-    Run one simulation with given parameters for all districts
-    Returns: aggregated statistics
+    Run one simulation with GLOBAL MIXTURE parameters
+    
+    Args:
+        params: Global mixture structure with 'global_phis', 'global_weights', 'districts'
     """
     
     all_rankings = []
     all_district_assignments = []
     
-    districts = [int(x) for x in list(params_all_districts.keys())]
+    districts = list(params['districts'].keys())
+    global_phis = params['global_phis']
+    global_weights = params['global_weights']
+    K = len(global_phis)
     
     for district in districts:
         print(f"    Simulating district: {district}")
-        params = params_all_districts[district]
         
-        # Get number of students in this district
-        n_students = int(match_stats_df[match_stats_df['Residential District'] == district]['Total Applicants'].iloc[0])
+        n_students = int(match_stats_df[
+            match_stats_df['Residential District'] == district
+        ]['Total Applicants'].iloc[0])
         
-        # Sample rankings for this district
-        schools_list = params['schools']
-        school_to_global_idx = {s: i for i, s in enumerate(schools_list)}
+        # Get district-specific info
+        sigma_d = params['districts'][district]['central_ranking']
+        schools_list = params['districts'][district]['schools']
+        school_to_idx = {s: i for i, s in enumerate(schools_list)}
         
         print(f" Generating rankings for {n_students} students of length {k_ranking_length} amongst {len(schools_list)} schools")
-        rankings = sample_mallows_mixture(
-            [np.array([school_to_global_idx[s] for s in cr]) for cr in params['central_rankings']],
-            params['phis'],
-            params['mixture_weights'],
-            n_students
-        )
         
-        # Truncate to k schools
-        rankings = [r[:k_ranking_length] for r in rankings]
+        # Sample from global mixture
+        rankings = []
+        for _ in range(n_students):
+            # Choose component from global mixture
+            k = np.random.choice(K, p=global_weights)
+            
+            # Sample from Mallows(σ_d, φ_k)
+            sigma_indices = np.array([school_to_idx[s] for s in sigma_d])
+            ranking = mallows_insertion_sampling(sigma_indices, global_phis[k])
+            
+            # Truncate to k schools
+            ranking = ranking[:k_ranking_length]
+            
+            rankings.append(ranking)
         
         # Convert to school DBNs
         rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
@@ -224,30 +224,18 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
         all_rankings.extend(rankings_as_schools)
         all_district_assignments.extend([district] * n_students)
     
-    # Create global lottery
-    n_total = len(all_rankings)
-    district_offsets = {}
-    offset = 0
-    for district in districts:
-        n_students = int(match_stats_df[match_stats_df['Residential District'] == district]['Total Applicants'].iloc[0])
-        district_offsets[district] = offset
-        offset += n_students
-    
-    # All unique schools
+    # Rest is same as before
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
     
-    # Convert rankings to indices
     rankings_as_indices = []
     for ranking in all_rankings:
         rankings_as_indices.append(np.array([school_to_idx[s] for s in ranking]))
     
-    # Get capacities
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}, Total students: {len(all_rankings)}")
 
-    # Run Gale-Shapley
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
 
@@ -255,7 +243,6 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
     num_unmatched = np.sum(matches_idx == -1)
     print(f"    Matched: {num_matched}/{len(matches_idx)}, Unmatched: {num_unmatched}")
 
-    # Check distribution of matches
     if num_matched > 0:
         match_positions = []
         for i, ranking in enumerate(rankings_as_indices):
@@ -265,8 +252,7 @@ def run_single_simulation(params_all_districts, df, match_stats_df, school_info_
                     match_positions.append(match_pos[0])
         if match_positions:
             print(f"    Match position distribution: 1st={sum(p==0 for p in match_positions)}, 2nd={sum(p==1 for p in match_positions)}, 3rd={sum(p==2 for p in match_positions)}")
-        
-    # Compute aggregates
+    
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
     
@@ -337,61 +323,9 @@ def extract_observed_aggregates(df, match_stats_df):
     return observed
 
 
-def initialize_parameters_for_em(districts, df, K=1):
-    """
-    Initialize Mallows parameters for EM algorithm
-    
-    Args:
-        districts: list of district IDs
-        df: admissions data
-        K: number of mixture components
-    
-    Returns:
-        dict with initial parameters per district
-    """
-    params = {}
-    
-    for district in districts:
-        df_district = df[df['Residential District'] == district]
-        schools_list = df_district['School DBN'].values
-        n_schools = len(schools_list)
-        
-        # Initialize central ranking based on observed popularity
-        obs_total = df_district.set_index('School DBN')['Total Applicants by Residential District'].to_dict()
-        initial_ranking = sorted(schools_list, key=lambda s: -obs_total.get(s, 0))
-        
-        central_rankings = []
-        for k in range(K):
-            ranking = initial_ranking.copy()
-            # Shuffle top 20 for variation
-            top_n = min(20, len(ranking))
-            top_schools = ranking[:top_n]
-            np.random.shuffle(top_schools)
-            ranking[:top_n] = top_schools
-            central_rankings.append(ranking)
-        
-        # Initialize phis
-        phis = np.random.beta(4, 1, K) 
-        phis = np.clip(phis, 0.7, 0.99)
-        
-        # Mixture weights
-        mixture_weights = np.random.dirichlet([1]*K) if K > 1 else np.array([1.0])
-        
-        print(f"  District {district}: initialized with phis = {phis}")
-        
-        params[district] = {
-            'schools': schools_list,
-            'central_rankings': central_rankings,
-            'phis': phis,
-            'mixture_weights': mixture_weights
-        }
-    
-    return params
-
-
-def compute_log_likelihood_gaussian(params_district, observed_agg, district,
+def compute_log_likelihood_gaussian(params_global, observed_agg, district,
                                      df, match_stats_df, school_info_df,
-                                     all_params, M=20):
+                                     M=20):
     """
     Compute approximate log-likelihood using Gaussian assumption
     
@@ -399,8 +333,7 @@ def compute_log_likelihood_gaussian(params_district, observed_agg, district,
     """
     
     # Create params dict with all districts, but use params_district for target district
-    params_all = copy.deepcopy(all_params)
-    params_all[district] = params_district
+    params_all = params_global.copy()
     
     # Get total number of students across ALL districts
     n_students_total = int(match_stats_df['Total Applicants'].sum())
@@ -502,97 +435,34 @@ def compute_log_likelihood_gaussian(params_district, observed_agg, district,
     
     return log_lik
 
-def optimize_district_parameters_simple(district, observed_agg, current_params,
-                                        df, match_stats_df, school_info_df,
-                                        all_params, M=20):
-    """
-    M-step: Optimize parameters for one district
-    
-    Args:
-        all_params: Parameters for ALL districts (needed for simulation context)
-    
-    Returns:
-        sigma_new, phi_new
-    """
-    
-    print(f"\n  Optimizing district {district}...")
-    
-    schools = current_params['schools']
-    sigma_current = current_params['central_rankings'][0]
-    phi_current = current_params['phis'][0]
-    
-    def objective_phi(phi):
-        """Negative log-likelihood as function of phi only"""
-        
-        # Build params with this phi
-        params_test = {
-            'schools': schools,
-            'central_rankings': [sigma_current],
-            'phis': np.array([phi]),
-            'mixture_weights': np.array([1.0])
-        }
-        
-        # Compute log-likelihood (simulating ALL districts)
-        log_lik = compute_log_likelihood_gaussian(
-            params_test, observed_agg, district,
-            df, match_stats_df, school_info_df,
-            all_params,  # ← Pass all params
-            M=M
-        )
-        
-        print(f"    phi={phi:.4f}, log_lik={log_lik:.2f}")
-        
-        return -log_lik
-    
-    # Optimize phi only
-    from scipy.optimize import minimize_scalar
-    
-    result = minimize_scalar(
-        objective_phi,
-        bounds=(0.05, 0.95),
-        method='bounded',
-        options={'xatol': 0.05}
-    )
-    
-    phi_new = result.x
-    sigma_new = sigma_current
-    
-    print(f"  Optimized: phi {phi_current:.4f} → {phi_new:.4f}")
-    
-    return sigma_new, phi_new
-
 
 def EM_algorithm(df, match_stats_df, school_info_df,
                  max_iter=10, tol=0.01, K=1, M_simulations=20, seed=GLOBAL_SEED):
     """
-    EM algorithm to find maximum likelihood Mallows parameters
+    EM algorithm with GLOBAL MIXTURE
     """
     
     np.random.seed(seed)
     
+    print("="*60)
+    print("EM ALGORITHM - GLOBAL MIXTURE")
+    print("="*60)
     
-    # Get districts
     districts = sorted(df['Residential District'].unique())
-    
-    # Create fixed global lottery
     n_total_students = int(match_stats_df['Total Applicants'].sum())
     lottery_global = np.random.permutation(n_total_students)
     
     print(f"\nInitialization:")
     print(f"  Districts: {len(districts)}")
     print(f"  Total students: {n_total_students}")
-    print(f"  Mixture components: K={K}")
+    print(f"  Global mixture components: K={K}")
     print(f"  Max iterations: {max_iter}")
     print(f"  Simulations per evaluation: M={M_simulations}\n")
     
-    # Initialize parameters
-    print("Initializing parameters...")
-    params = initialize_parameters_for_em(districts, df, K)
-    
-    # Extract observed aggregates
+    # Initialize with GLOBAL mixture
+    params = initialize_parameters_global_mixture(districts, df, K)
     observed_agg = extract_observed_aggregates(df, match_stats_df)
     
-    # Track log-likelihoods
     log_likelihoods = []
     
     # EM loop
@@ -603,46 +473,28 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         
         old_params = copy.deepcopy(params)
         
-        total_log_lik = 0
+        # M-STEP: Optimize global parameters
+        params = optimize_global_mixture(
+            params, observed_agg, df, match_stats_df, 
+            school_info_df, M=M_simulations
+        )
         
-        # M-STEP: Optimize each district
+        # Compute total log-likelihood
+        total_log_lik = 0
         for district in districts:
-            
-            # Optimize parameters
-            sigma_new, phi_new = optimize_district_parameters_simple(
-                district,
-                observed_agg[district],
-                params[district],
-                df, match_stats_df, school_info_df,
-                params,  # ← Pass ALL current params
-                M=M_simulations
-            )
-            
-            # Update parameters
-            params[district]['central_rankings'][0] = sigma_new
-            params[district]['phis'][0] = phi_new
-            
-            # Compute log-likelihood at new parameters
             district_log_lik = compute_log_likelihood_gaussian(
-                params[district],
-                observed_agg[district],
-                district,
-                df, match_stats_df, school_info_df,
-                params,  # ← Use updated params
-                M=M_simulations
+                params, observed_agg[district], district,
+                df, match_stats_df, school_info_df, M=M_simulations
             )
-            
             total_log_lik += district_log_lik
-            
-            print(f"  District {district} log-likelihood: {district_log_lik:.2f}")
         
         log_likelihoods.append(total_log_lik)
         print(f"\nTotal log-likelihood: {total_log_lik:.2f}")
         
         # Check convergence
         max_phi_change = max(
-            abs(params[d]['phis'][0] - old_params[d]['phis'][0])
-            for d in districts
+            abs(params['global_phis'][k] - old_params['global_phis'][k])
+            for k in range(K)
         )
         
         print(f"Max phi change: {max_phi_change:.4f}")
@@ -657,9 +509,9 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             print(f"{'='*60}")
             break
     
-    print(f"\nFinal parameters:")
-    for district in districts:
-        print(f"  District {district}: phi = {params[district]['phis'][0]:.4f}")
+    print(f"\nFinal global parameters:")
+    print(f"  Global phis: {params['global_phis']}")
+    print(f"  Global weights: {params['global_weights']}")
     
     return params, lottery_global, log_likelihoods
 

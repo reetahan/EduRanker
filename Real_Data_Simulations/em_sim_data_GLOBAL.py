@@ -87,7 +87,7 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     
     total_app = np.zeros((n_districts, n_schools))
     true_app = np.zeros((n_districts, n_schools))
-    match_stats = np.zeros((n_districts, 7))
+    match_stats = np.zeros((n_districts, 4))
     filled = np.zeros(n_schools)
     
     for student_id in range(n_students):

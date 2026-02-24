@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
-from scipy.stats import multivariate_normal
+from scipy.stats import  kendalltau
 from scipy.optimize import minimize_scalar
 import copy
 import sys
 import argparse
 
-GLOBAL_SEED = 42
+
 
 
 def read_data(file_path, sheet=0):
@@ -146,7 +146,6 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     }
 
 def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
-    #print(f"Running Gale-Shapley algorithm...")
     n_students = len(student_rankings)
     n_schools = len(school_capacities)
     
@@ -156,8 +155,6 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
     school_tentative = [[] for _ in range(n_schools)]
     
     for student in student_order:
-        #if(student % 1000 == 0):
-        #   print(f"  Processing student {student}...")
         for school in student_rankings[student]:
             if len(school_tentative[school]) < school_capacities[school]:
                 school_tentative[school].append(student)
@@ -253,54 +250,20 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
                 match_pos = np.where(ranking == matches_idx[i])[0]
                 if len(match_pos) > 0:
                     match_positions.append(match_pos[0])
-        #if match_positions:
-        #    print(f"    Match position distribution: 1st={sum(p==0 for p in match_positions)}, 2nd={sum(p==1 for p in match_positions)}, 3rd={sum(p==2 for p in match_positions)}")
 
-        '''
-        print(f"\n>>> MATCH POSITION DEBUG:")
-        print(f">>> Position 0 (1st): {sum(p==0 for p in match_positions)}")
-        print(f">>> Position 1 (2nd): {sum(p==1 for p in match_positions)}")
-        print(f">>> Position 2 (3rd): {sum(p==2 for p in match_positions)}")
-        print(f">>> Position 3-4: {sum(3<=p<5 for p in match_positions)}")
-        print(f">>> Position 5-9: {sum(5<=p<10 for p in match_positions)}")
-        print(f">>> Position 10-11: {sum(10<=p<12 for p in match_positions)}")
-        print(f">>> Total matched: {len(match_positions)}")
-        print(f">>> Total unmatched: {num_unmatched}\n")
-        '''
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
-    '''
-    print(f"\n>>> SIMULATION SANITY CHECK:")
-    print(f">>> Total students simulated: {len(all_rankings)}")
-    print(f">>> Sample ranking from first student: {all_rankings[0]}")
-    print(f">>> Sample ranking from the 42nd student: {all_rankings[41]}")
-    print(f">>> Match stats shape: {agg['match_stats'].shape}")
-    print(f">>> Match stats raw values:\n{agg['match_stats']}")
-    '''
+  
     return agg
 
-def continuous_to_permutation(sigma_continuous, schools):
-    """
-    Convert continuous vector to permutation via argsort
-    
-    Args:
-        sigma_continuous: np.array of continuous values
-        schools: list of school IDs
-    
-    Returns:
-        Permutation (list of schools in ranked order)
-    """
-    indices = np.argsort(sigma_continuous)
-    return [schools[i] for i in indices]
 
-
-def create_synthetic_experiment(n_students=600, n_schools=20, capacity_per_school=30,
+def create_synthetic_experiment(n_students=500, n_schools=20, capacity_per_school=30,
                                 k_ranking_length=10, true_K=1, seed=42):
     """
     Create synthetic data with known ground truth parameters
     
     Args:
-        n_students: Total students (default 600)
+        n_students: Total students (default 500)
         n_schools: Total schools (default 20)
         capacity_per_school: Seats per school (default 30, gives 600 capacity)
         k_ranking_length: List length (default 10)
@@ -313,9 +276,6 @@ def create_synthetic_experiment(n_students=600, n_schools=20, capacity_per_schoo
     
     np.random.seed(seed)
     
-    print("="*60)
-    print(f"CREATING SYNTHETIC EXPERIMENT (K={true_K})")
-    print("="*60)
     
     # Define TRUE parameters (ground truth)
     if true_K == 1:
@@ -379,8 +339,7 @@ def create_synthetic_experiment(n_students=600, n_schools=20, capacity_per_schoo
     agg = compute_aggregates(rankings_as_schools, matches_schools, 
                             district_assignments, schools_list)
     
-    # Create dataframes in expected format
-    # df: Application data
+
     app_data = []
     for school_idx, school in enumerate(schools_list):
         # Count applications
@@ -454,23 +413,6 @@ def create_synthetic_experiment(n_students=600, n_schools=20, capacity_per_schoo
     
     return df, match_stats_df, school_info_df, true_params
 
-def permutation_to_continuous(sigma, schools):
-    """
-    Convert permutation to continuous representation
-    
-    Args:
-        sigma: Permutation (list of schools in ranked order)
-        schools: list of all schools
-    
-    Returns:
-        np.array of continuous values
-    """
-    sigma_continuous = np.zeros(len(schools))
-    for i, school in enumerate(schools):
-        position = sigma.index(school)
-        sigma_continuous[i] = float(position)
-    return sigma_continuous
-
 
 def extract_observed_aggregates(df, match_stats_df):
     """
@@ -505,7 +447,7 @@ def extract_observed_aggregates(df, match_stats_df):
 
 
 def EM_algorithm(df, match_stats_df, school_info_df,
-                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=GLOBAL_SEED):
+                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42):
     """
     EM algorithm with GLOBAL MIXTURE
     """
@@ -559,14 +501,21 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         # M-STEP: Optimize global parameters
         params = optimize_global_mixture(
             params, observed_agg, df, match_stats_df, 
-            school_info_df, M=M_simulations
+            school_info_df, M=M_simulations, seed=seed,
+            iteration=iteration
         )
+
+        # Sort them to remove indexing ambiguity
+        sorted_indices = np.argsort(params['global_phis'])
+        params['global_phis'] = params['global_phis'][sorted_indices]
+        params['global_weights'] = params['global_weights'][sorted_indices]
         
         # Compute total log-likelihood
         print("\n  Computing final log-likelihood at optimized parameters...")
         total_log_lik = compute_log_likelihood_gaussian_all_districts(
             params, observed_agg, df, match_stats_df, 
-            school_info_df, M=M_simulations
+            school_info_df, M=M_simulations, seed=seed,
+            iteration=iteration
         )
         
         log_likelihoods.append(total_log_lik)
@@ -620,7 +569,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
         
         obs_total = df_district.set_index('School DBN')['Ratio'].to_dict()
         
-        central_ranking = sorted(schools_list, key=lambda s: -obs_total.get(s, 0))
+        central_ranking = sorted(schools_list, key=lambda s: obs_total[s])
         
         params['districts'][district] = {
             'schools': schools_list,
@@ -635,7 +584,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
 
 def sample_students_global_mixture(params, district, n_students):
     """
-    Sample students from global mixture with district-specific σ
+    Sample students from global mixture with district-specific sigma
     """
     
     # Global parameters
@@ -664,7 +613,7 @@ def sample_students_global_mixture(params, district, n_students):
 
 def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
                                                    df, match_stats_df, school_info_df,
-                                                   M=1):
+                                                   M=1, seed=42, iteration=1):
     """
     Compute log-likelihood for ALL districts at once
     
@@ -686,7 +635,15 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         print(f"      Simulation {sim+1}/{M}...", end='\r')
         
         # Create fresh lottery
-        lottery_sim = np.random.permutation(n_students_total)
+        
+        current_sim_seed = seed * sim
+        
+        # FIX: The lottery is now fixed for this 'world' across all phi evaluations
+        rng_lottery = np.random.default_rng(seed=current_sim_seed)
+        lottery_sim = rng_lottery.permutation(n_students_total)
+        
+        # FIX: The Mallows choices are also fixed for this 'world'
+        np.random.seed(current_sim_seed)
         
         # Simulate ALL districts together (do this ONCE per M iteration)
         agg = run_single_simulation(
@@ -702,7 +659,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     print()  # New line after progress indicator
     
     print("\n" + "="*60)
-    print("FIT DIAGNOSTICS")
+    print(f"FIT DIAGNOSTICS | Seed: {seed} | Iteration: {iteration}")
     print("="*60)
     
     for d_idx, district in enumerate(districts):  
@@ -780,7 +737,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     return total_log_lik
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
-                            school_info_df, M=20):
+                            school_info_df, M=20, seed=42, iteration=1):
     
     K = len(params['global_phis'])
     
@@ -803,7 +760,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             # Compute log-likelihood for ALL districts at once
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
-                school_info_df, M=M
+                school_info_df, M=M, seed=seed, iteration=iteration
             )
             
             # Swap back so we don't permanently alter params until the result is final
@@ -815,9 +772,9 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
         
         result = minimize_scalar(
             objective_global_phi_k,
-            bounds=(0.05, 0.95),
+            bounds=(0.01, 0.99),
             method='bounded',
-            options={'xatol': 0.05}
+            options={'xatol': 0.01}
         )
         
         phi_k_new = result.x
@@ -826,7 +783,11 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
         # The next iteration of the 'for k in range(K)' loop will now use this new value.
         params['global_phis'][k] = phi_k_new
         
-        print(f"      Optimized: φ_{k} {phi_k_initial:.4f} → {phi_k_new:.4f}")
+        opt_line = f"      Iteration {iteration} | Seed {seed} | Optimized: φ_{k} {phi_k_initial:.4f} → {phi_k_new:.4f}"
+        print(opt_line)
+        with open("experiment3_results.txt", "a+") as f:
+            f.write(opt_line + "\n")
+            f.flush()
     
     return params
 
@@ -897,21 +858,47 @@ if __name__ == "__main__":
                 n_students=500, n_schools=20, capacity_per_school=30,
                 k_ranking_length=10, true_K=3, seed=44
             )
-            
+
+            true_sigma = true_params3['true_sigma']            
+            print(f"Ground Truth: {true_sigma}")
+
+            ratio_ranking = df3.sort_values('Ratio', ascending=True)['School DBN'].tolist()
+
+            # 3. Calculate Kendall-Tau Correlation
+            # We map the school names to their positions in the True ranking to compare
+            true_pos = {school: i for i, school in enumerate(true_sigma)}
+            true_ranks = [true_pos[s] for s in true_sigma]
+            estimated_ranks = [true_pos[s] for s in ratio_ranking]
+
+            tau, _ = kendalltau(true_ranks, estimated_ranks)
+            norm_tau =  (1 - tau) / 2 
+
+            # 4. Print the Comparison
+            print("\n" + "="*40)
+            print(f"True Popularity versus Derived Central Ranking")
+            print("="*40)
+            print(f"Kendall-Tau Score in [-1,1]: {tau:.4f}")
+            print(f"Kendall-Tau Score Normalized to [0,1] : {norm_tau:.4f}")
+            print(f"Ground Truth: {true_sigma}")
+            print(f"Ratio Metric: {ratio_ranking}")
+            print("-" * 40)
+            exit(0)
+
+     
             params3, _, log_liks3 = EM_algorithm(
                 df3, match_stats_df3, school_info_df3,
                 max_iter=10, M_simulations=10, K=3, seed=seed
             )
             
             out_lines = [
-                f"\nEXPERIMENT 3 RESULTS:",
-                f"  True phis: {true_params3['true_phis']}",
-                f"  Estimated phis: {params3['global_phis']}",
-                f"  Error: {np.abs(params3['global_phis'] - true_params3['true_phis'])}"
-            ]
+                    f"\nSEED {seed} RESULTS:", # Added this
+                    f"  True phis: {true_params3['true_phis']}",
+                    f"  Estimated phis: {params3['global_phis']}",
+                    f"  Error: {np.abs(params3['global_phis'] - true_params3['true_phis'])}"
+                ]
             for line in out_lines:
                 print(line)
-            with open("experiment3_results.txt", "a") as f:
+            with open("experiment3_results.txt", "a+") as f:
                 for line in out_lines:
                     f.write(line + "\n")
                     f.flush()

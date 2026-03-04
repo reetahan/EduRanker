@@ -20,6 +20,15 @@ def read_data(file_path, sheet=0):
         data = pd.read_excel(file_path, sheet_name=sheet)
     return data
 
+def log_and_print(message, log_file=None):
+    """Print to console and optionally write to file with immediate flush"""
+    print(message)
+    if log_file is not None:
+        f = open(log_file, "a+")
+        f.write(message + '\n')
+        f.flush()
+        f.close()
+
 
 def preprocess_data(df, match_stats_df, school_info_df):
 
@@ -38,6 +47,8 @@ def preprocess_data(df, match_stats_df, school_info_df):
     school_info_df =  school_info_df[['dbn','Capacity']]
     school_info_df = school_info_df.rename(columns={'dbn': 'School DBN'})
 
+    school_info_df = school_info_df[school_info_df['School DBN'].isin(df['School DBN'].unique())]
+
     match_stats_df.columns = match_stats_df.iloc[0]
     match_stats_df = match_stats_df.drop(match_stats_df.index[0])
     match_stats_df = match_stats_df[['Residential District', 'Total Applicants', '% Matches to Choice 1-3', 
@@ -54,7 +65,7 @@ def preprocess_data(df, match_stats_df, school_info_df):
     match_stats_df['Residential District'] = pd.to_numeric(match_stats_df['Residential District'])
     
     avg_list_length = df['Total Applicants by Residential District'].sum() / match_stats_df['Total Applicants'].sum()
-    print(f"Average list length from data: {avg_list_length:.2f}")
+    log_and_print(f"Average list length from data: {avg_list_length:.2f}")
      
     return df, match_stats_df, school_info_df
 
@@ -109,7 +120,7 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
             try:
                 match_position = ranking.index(match)  
             except ValueError:
-                print(f"Warning: Student matched to {match} not in ranking: {ranking}")
+                log_and_print(f"Warning: Student matched to {match} not in ranking: {ranking}")
                 continue
             
             for school in ranking[match_position:]:
@@ -175,13 +186,17 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
 
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global, k_ranking_length=10, M_val=1):
+                         lottery_global, k_ranking_length=10, M_val=1, outfile=None):
     """
     Run one simulation with GLOBAL MIXTURE parameters
     
     Args:
         params: Global mixture structure with 'global_phis', 'global_weights', 'districts'
     """
+
+    log_file = None
+    if outfile:
+        log_file = open(outfile, 'w', buffering=1)
     
     all_rankings = []
     all_district_assignments = []
@@ -191,18 +206,17 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     global_weights = params['global_weights']
     K = len(global_phis)
     
-    for district in districts:
-        
+    for district in  districts:
         n_students = int(match_stats_df[
             match_stats_df['Residential District'] == district
         ]['Total Applicants'].iloc[0])
-        
+        log_and_print(f"Handling district {district} with {n_students} students", outfile)
         # Get district-specific info
         sigma_d = params['districts'][district]['central_ranking']
         schools_list = params['districts'][district]['schools']
         school_to_idx = {s: i for i, s in enumerate(schools_list)}
         
-        #print(f" Generating rankings for {n_students} students of length {k_ranking_length} amongst {len(schools_list)} schools")
+        #log_and_print(f" Generating rankings for {n_students} students of length {k_ranking_length} amongst {len(schools_list)} schools")
         
         # Sample from global mixture
         rankings = []
@@ -235,14 +249,14 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    #print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}, Total students: {len(all_rankings)}")
+    log_and_print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}, Total students: {len(all_rankings)}", log_file=outfile)
 
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
 
     num_matched = np.sum(matches_idx >= 0)
     num_unmatched = np.sum(matches_idx == -1)
-    #print(f"    Matched: {num_matched}/{len(matches_idx)}, Unmatched: {num_unmatched}")
+    log_and_print(f"    Matched: {num_matched}/{len(matches_idx)}, Unmatched: {num_unmatched}", log_file=outfile)
 
     if num_matched > 0:
         match_positions = []
@@ -254,7 +268,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
 
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
-  
+    log_and_print(f" Aggregate results: {agg}", log_file=log_file)
     return agg
 
 
@@ -335,7 +349,6 @@ def create_synthetic_experiment(n_students=500, n_schools=20,
     
     match_stats_df = pd.DataFrame(match_stats_list)
     
-    # 7. PREPARE APP DATA (The Ratio Metric Dataframe)
     app_data = []
     for d_id in districts:
         mask = (student_districts == d_id)
@@ -407,27 +420,30 @@ def extract_observed_aggregates(df, match_stats_df):
 
 
 def EM_algorithm(df, match_stats_df, school_info_df,
-                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42):
+                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42, outfile=None):
     """
     EM algorithm with GLOBAL MIXTURE
     """
     
     np.random.seed(seed)
+    log_file = None
+    if outfile:
+        log_file = open(outfile, 'w', buffering=1)
     
-    print("="*60)
-    print("EM ALGORITHM - GLOBAL MIXTURE")
-    print("="*60)
+    log_and_print("="*60, log_file=outfile)
+    log_and_print("EM ALGORITHM - GLOBAL MIXTURE", log_file=outfile)
+    log_and_print("="*60, log_file=outfile)
     
     districts = sorted(df['Residential District'].unique())
     n_total_students = int(match_stats_df['Total Applicants'].sum())
     lottery_global = np.random.permutation(n_total_students)
     
-    print(f"\nInitialization:")
-    print(f"  Districts: {len(districts)}")
-    print(f"  Total students: {n_total_students}")
-    print(f"  Global mixture components: K={K}")
-    print(f"  Max iterations: {max_iter}")
-    print(f"  Simulations per evaluation: M={M_simulations}\n")
+    log_and_print(f"\nInitialization:", log_file=outfile)
+    log_and_print(f"  Districts: {len(districts)}", log_file=outfile)
+    log_and_print(f"  Total students: {n_total_students}", log_file=outfile)
+    log_and_print(f"  Global mixture components: K={K}", log_file=outfile)
+    log_and_print(f"  Max iterations: {max_iter}", log_file=outfile)
+    log_and_print(f"  Simulations per evaluation: M={M_simulations}\n", log_file=outfile)
     
     # Initialize with GLOBAL mixture
     params = initialize_parameters_global_mixture(districts, df, K)
@@ -438,9 +454,9 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     
     # EM loop
     for iteration in range(max_iter):
-        print(f"\n{'='*60}")
-        print(f"EM ITERATION {iteration + 1}/{max_iter}")
-        print(f"{'='*60}")
+        log_and_print(f"\n{'='*60}", log_file=outfile)
+        log_and_print(f"EM ITERATION {iteration + 1}/{max_iter}", log_file=outfile)
+        log_and_print(f"{'='*60}", log_file=outfile)
         
         old_params = copy.deepcopy(params)
         
@@ -460,15 +476,15 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         params = nudge_district_sigmas(params, final_agg, school_info_df)
         
         # Compute total log-likelihood
-        print("\n  Computing final log-likelihood at optimized parameters...")
+        log_and_print("\n  Computing final log-likelihood at optimized parameters...", log_file=outfile)
         total_log_lik = compute_log_likelihood_gaussian_all_districts(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration
+            iteration=iteration, outfile=outfile
         )
         
         log_likelihoods.append(total_log_lik)
-        print(f"\nTotal log-likelihood: {total_log_lik:.2f}")
+        log_and_print(f"\nTotal log-likelihood: {total_log_lik:.2f}", log_file=outfile)
         
         # Check convergence
         max_phi_change = max(
@@ -476,21 +492,21 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             for k in range(K)
         )
         
-        print(f"Max phi change: {max_phi_change:.4f}")
+        log_and_print(f"Max phi change: {max_phi_change:.4f}", log_file=outfile)
         
         if iteration > 0:
             delta_log_lik = log_likelihoods[-1] - log_likelihoods[-2]
-            print(f"Log-likelihood change: {delta_log_lik:.4f}")
+            log_and_print(f"Log-likelihood change: {delta_log_lik:.4f}", log_file=outfile)
         
         if max_phi_change < tol:
-            print(f"\n{'='*60}")
-            print("EM CONVERGED!")
-            print(f"{'='*60}")
+            log_and_print(f"\n{'='*60}", log_file=outfile)
+            log_and_print("EM CONVERGED!", log_file=outfile)
+            log_and_print(f"{'='*60}", log_file=outfile)
             break
     
-    print(f"\nFinal global parameters:")
-    print(f"  Global phis: {params['global_phis']}")
-    print(f"  Global weights: {params['global_weights']}")
+    log_and_print(f"\nFinal global parameters:", log_file=outfile)
+    log_and_print(f"  Global phis: {params['global_phis']}", log_file=outfile)
+    log_and_print(f"  Global weights: {params['global_weights']}", log_file=outfile)
     
     return params, lottery_global, log_likelihoods, final_agg
 
@@ -525,10 +541,6 @@ def initialize_parameters_global_mixture(districts, df, K=1):
             'central_ranking': central_ranking
         }
     
-    print(f"Global mixture initialized:")
-    print(f"  Global phis: {global_phis}")
-    print(f"  Global weights: {global_weights}")
-    
     return params
 
 def sample_students_global_mixture(params, district, n_students):
@@ -562,7 +574,7 @@ def sample_students_global_mixture(params, district, n_students):
 
 def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
                                                    df, match_stats_df, school_info_df,
-                                                   M=1, seed=42, iteration=1):
+                                                   M=1, seed=42, iteration=1, outfile=None):
     """
     Compute log-likelihood for ALL districts at once
     
@@ -573,7 +585,10 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     Returns:
         total_log_lik: Sum of log-likelihoods across all districts
     """
-    
+    log_file = None
+    if outfile:
+        log_file = open(outfile, 'w', buffering=1)
+
     districts = sorted(observed_agg.keys())
     n_students_total = int(match_stats_df['Total Applicants'].sum())
     
@@ -582,24 +597,20 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
 
     total_filled = np.zeros(len(school_info_df))
     
+    # Fixed lottery across all M simulations
+    rng_lottery = np.random.default_rng(seed=seed)
+    lottery_fixed = rng_lottery.permutation(n_students_total)
+    
     for sim in range(M):
-        print(f"      Simulation {sim+1}/{M}...", end='\r')
+        log_and_print(f"      Simulation {sim+1}/{M}...", log_file=outfile)
         
-        # Create fresh lottery
-        
-        current_sim_seed = seed * sim
-        
-        # FIX: The lottery is now fixed for this 'world' across all phi evaluations
-        rng_lottery = np.random.default_rng(seed=current_sim_seed)
-        lottery_sim = rng_lottery.permutation(n_students_total)
-        
-        # FIX: The Mallows choices are also fixed for this 'world'
-        np.random.seed(current_sim_seed)
+        # Only vary the Mallows preference sampling, not the lottery
+        np.random.seed(seed + sim)
         
         # Simulate ALL districts together (do this ONCE per M iteration)
         agg = run_single_simulation(
             params_global, df, match_stats_df, school_info_df, 
-            lottery_sim, M_val=sim
+            lottery_fixed, M_val=sim, outfile=outfile
         )
 
         total_filled += agg['filled']
@@ -615,31 +626,31 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     obs_util = school_info_df['Utilization'].values 
     util_penalty = -0.1 * np.mean((obs_util - sim_util)**2)
     
-    print()  # New line after progress indicator
+    log_and_print()  # New line after progress indicator
     
-    print("\n" + "="*60)
-    print(f"FIT DIAGNOSTICS | Seed: {seed} | Iteration: {iteration}")
-    print("="*60)
+    log_and_print("\n" + "="*60, log_file=outfile)
+    log_and_print(f"FIT DIAGNOSTICS | Seed: {seed} | Iteration: {iteration}", log_file=outfile)
+    log_and_print("="*60, log_file=outfile)
     
     for d_idx, district in enumerate(districts):  
         obs = observed_agg[district]['match_stats']
         sim = agg['match_stats'][d_idx, :]
         
-        print(f"\nDistrict {district}:")
-        print(f"  Observed:  top3={obs[0]:5.1f}%, top5={obs[1]:5.1f}%, top10={obs[2]:5.1f}%, unmatched={obs[3]:5.1f}%")
-        print(f"  Simulated: top3={sim[0]:5.1f}%, top5={sim[1]:5.1f}%, top10={sim[2]:5.1f}%, unmatched={sim[3]:5.1f}%")
-        print(f"  Difference: top3={obs[0]-sim[0]:+5.1f}, top5={obs[1]-sim[1]:+5.1f}, top10={obs[2]-sim[2]:+5.1f}, unmatched={obs[3]-sim[3]:+5.1f}")
+        log_and_print(f"\nDistrict {district}:", log_file=outfile)
+        log_and_print(f"  Observed:  top3={obs[0]:5.1f}%, top5={obs[1]:5.1f}%, top10={obs[2]:5.1f}%, unmatched={obs[3]:5.1f}%", log_file=outfile)
+        log_and_print(f"  Simulated: top3={sim[0]:5.1f}%, top5={sim[1]:5.1f}%, top10={sim[2]:5.1f}%, unmatched={sim[3]:5.1f}%", log_file=outfile)
+        log_and_print(f"  Difference: top3={obs[0]-sim[0]:+5.1f}, top5={obs[1]-sim[1]:+5.1f}, top10={obs[2]-sim[2]:+5.1f}, unmatched={obs[3]-sim[3]:+5.1f}", log_file=outfile)
     
-    print("Global School Utilization (Top 5 Mismatches):")
+    log_and_print("Global School Utilization (Top 5 Mismatches):", log_file=outfile)
     util_diff = obs_util - sim_util
     mismatch_indices = np.argsort(np.abs(util_diff))[::-1][:5]
     for idx in mismatch_indices:
         s_name = school_info_df.iloc[idx]["School DBN"]
-        print(f"  {s_name}: Obs={obs_util[idx]:5.1f}%, Sim={sim_util[idx]:5.1f}%, Diff={util_diff[idx]:+5.1f}%")
+        log_and_print(f"  {s_name}: Obs={obs_util[idx]:5.1f}%, Sim={sim_util[idx]:5.1f}%, Diff={util_diff[idx]:+5.1f}%", log_file=outfile)
     
-    print(f"  Mean Absolute Utilization Error: {np.mean(np.abs(util_diff)):.2f}%")
+    log_and_print(f"  Mean Absolute Utilization Error: {np.mean(np.abs(util_diff)):.2f}%", log_file=outfile)
     
-    print("="*60 + "\n")
+    log_and_print("="*60 + "\n", log_file=outfile)
     # Now compute likelihood for each district separately
     total_log_lik = 0
     
@@ -648,7 +659,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         
         # Check for valid data
         if len(X) == 0 or np.any(np.isnan(X)) or np.any(np.isinf(X)):
-            print(f"      Warning: Invalid data for district {district}")
+            log_and_print(f"      Warning: Invalid data for district {district}", log_file=outfile)
             continue
         
         # Estimate mean and covariance
@@ -690,11 +701,11 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
             
             # Sanity check
             if np.isnan(log_lik) or np.isinf(log_lik):
-                print(f"      Warning: Invalid log-likelihood for district {district}")
+                log_and_print(f"      Warning: Invalid log-likelihood for district {district}", log_file=outfile)
                 log_lik = -1e10
                 
         except Exception as e:
-            print(f"      Warning: Likelihood computation failed for district {district}: {e}")
+            log_and_print(f"      Warning: Likelihood computation failed for district {district}: {e}", log_file=outfile)
             
             # Fall back to simple MSE
             mse = np.mean((obs_vec - mu)**2)
@@ -717,9 +728,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             original_phi = params['global_phis'][k]
             params['global_phis'][k] = phi
             
-            # We must modify compute_log_likelihood_gaussian_all_districts 
-            # or run_single_simulation to return 'agg' results to capture them here.
-            # For this minimal change, we assume we capture the result of the final 'best' phi.
+           
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
                 school_info_df, M=M, seed=seed, iteration=iteration
@@ -736,9 +745,24 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
         )
         params['global_phis'][k] = result.x
 
-    # One final run to get the "clean" state for the nudge and final diagnostics
-    final_agg = run_single_simulation(params, df, match_stats_df, school_info_df, 
-                                     np.random.permutation(int(match_stats_df['Total Applicants'].sum())))
+    # Average M simulations to get robust aggregate for the nudge
+    n_students_total = int(match_stats_df['Total Applicants'].sum())
+    # Fixed lottery across all M simulations
+    lottery_fixed = np.random.permutation(n_students_total)
+    agg_accum = None
+    for sim in range(M):
+        # Only vary the Mallows preference sampling, not the lottery
+        np.random.seed(seed + sim)
+        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed)
+        
+        if agg_accum is None:
+            agg_accum = {k: v.copy() for k, v in agg_sim.items()}
+        else:
+            for key in agg_accum:
+                agg_accum[key] = agg_accum[key] + agg_sim[key]
+    
+    # Average the accumulated results
+    final_agg = {k: v / M for k, v in agg_accum.items()}
     
     return params, final_agg
 
@@ -764,16 +788,16 @@ def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1):
         
     return params
 
-def run_synthetic_experiment_3_MoM_no_utilization():
-    print("\n" + "="*60)
-    print("EXPERIMENT 3 MoM, Match Stats, No Utilization")
-    print("="*60)
+def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):
+    log_and_print("\n" + "="*60, log_file=outfile)
+    log_and_print("EXPERIMENT 3 MoM, Match Stats, No Utilization", log_file=outfile)
+    log_and_print("="*60, log_file=outfile)
     
     all_match_stats = []
     observed_stats = None
 
     for seed in range(40, 45):
-        print(f"\nRunning synthetic experiment with seed {seed}...")
+        log_and_print(f"\nRunning synthetic experiment with seed {seed}...", log_file=outfile)
         df3, match_stats_df3, school_info_df3, true_params3 = create_synthetic_experiment(
             n_students=500, n_schools=20, capacity_per_school=30,
             k_ranking_length=10, true_K=2, seed=DATA_GENERATION_SEED
@@ -804,7 +828,7 @@ def run_synthetic_experiment_3_MoM_no_utilization():
             f"  Error: {np.abs(params3['global_phis'] - true_params3['true_phis'])}"
         ]
         for line in out_lines:
-            print(line)
+            log_and_print(line, log_file=outfile)
         with open(f"{EXP_OUT_FOLDER}experiment3_results.txt", "a+") as f:
             for line in out_lines:
                 f.write(line + "\n")
@@ -826,17 +850,17 @@ def run_synthetic_experiment_3_MoM_no_utilization():
     plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K2.png", dpi=150)
     plt.show()
 
-def run_synthetic_experiment_3_MoM_yes_utilization():
-    print("\n" + "="*60)
-    print("EXPERIMENT 3 MoM, Match Stats, Yes Utilization")
-    print("="*60)
+def run_synthetic_experiment_3_MoM_yes_utilization(outfile=None):
+    log_and_print("\n" + "="*60, log_file=outfile)
+    log_and_print("EXPERIMENT 3 MoM, Match Stats, Yes Utilization", log_file=outfile)
+    log_and_print("="*60, log_file=outfile)
     
     all_match_stats = []
     all_utilizations = []
     observed_stats = None
 
     for seed in range(40, 50):
-        print(f"\nRunning synthetic experiment with seed {seed}...")
+        log_and_print(f"\nRunning synthetic experiment with seed {seed}...")
         df3, match_stats_df3, school_info_df3, true_params3 = create_synthetic_experiment(
             n_students=500, n_schools=20, capacity_per_school=30,
             k_ranking_length=10, true_K=3, district_ct=3, seed=DATA_GENERATION_SEED
@@ -883,7 +907,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization():
             out_lines.append(f"    Est  Top 3: {est_sigma[:3]}")
 
         for line in out_lines:
-            print(line)
+            log_and_print(line)
         with open(f"{EXP_OUT_FOLDER}experiment3_3_dists_utils_results.txt", "a+") as f:
             for line in out_lines:
                 f.write(line + "\n")
@@ -930,12 +954,38 @@ def run_synthetic_experiment_3_MoM_yes_utilization():
     plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot.png", dpi=150)
     plt.show()
 
+def run_real(outfile):
+    df = read_data('data/master_data_03_residential_district.xlsx')
+    match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
+                                sheet='Match to Choice-District')
+    school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
+                            sheet='Data')
+    df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df)
+
+    log_and_print(f"df unique schools: {df['School DBN'].nunique()}", outfile)
+    log_and_print(f"school_info_df rows: {len(school_info_df)}", outfile)
+    log_and_print(f"school_info_df unique schools: {school_info_df['School DBN'].nunique()}", outfile)
+
+    params, lottery, log_likelihoods, final_agg = EM_algorithm(
+        df, match_stats_df, school_info_df,
+        max_iter=args.max_iter,
+        M_simulations=args.M,
+        K=args.K,
+        outfile=outfile
+    )
+    log_and_print(f"===== FINAL RESULTS =====", outfile)
+    log_and_print(params, outfile=outfile)
+    log_and_print(final_agg, outfile=outfile)
+    log_and_print(log_likelihoods, outfile=outfile)
+
+
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--synthetic', action='store_true', help='Run synthetic experiments')
     parser.add_argument('--K', type=int, default=12, help='Number of mixture components for real data')
-    parser.add_argument('--M', type=int, default=1, help='Number of simulations per evaluation')
+    parser.add_argument('--M', type=int, default=5, help='Number of simulations per evaluation')
     parser.add_argument('--max_iter', type=int, default=5, help='Maximum EM iterations')
     
     args = parser.parse_args()
@@ -947,16 +997,4 @@ if __name__ == "__main__":
     
     else:
         # Run on real data
-        df = read_data('data/master_data_03_residential_district.xlsx')
-        match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
-                                    sheet='Match to Choice-District')
-        school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
-                                sheet='Data')
-        df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df)
-        
-        params, lottery, log_likelihoods, final_agg = EM_algorithm(
-            df, match_stats_df, school_info_df,
-            max_iter=args.max_iter,
-            M_simulations=args.M,
-            K=args.K
-        )
+        run_real(outfile=f"{EXP_OUT_FOLDER}run_main_1.txt")

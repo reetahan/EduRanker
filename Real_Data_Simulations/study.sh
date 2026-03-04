@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name=eduranker_main           # The name of the job
-#SBATCH --nodes=8                     # Request 1 compute node per job instance
+#SBATCH --nodes=64                     # Request 1 compute node per job instance
 #SBATCH --cpus-per-task=4             # Request 1 CPU per job instance
 #SBATCH --mem=8GB                     # Request 2GB of RAM per job instance
 #SBATCH --time=24:10:00               # Request 10 mins per job instance

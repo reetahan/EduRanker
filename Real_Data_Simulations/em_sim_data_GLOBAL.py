@@ -30,7 +30,7 @@ def log_and_print(message, log_file=None):
         f.close()
 
 
-def preprocess_data(df, match_stats_df, school_info_df):
+def preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df):
 
     df = df[['School DBN', 'School Name', 'School District', 'Residential District', 
          'Total Applicants by Residential District', 'True Applicants by Residential District',
@@ -44,10 +44,17 @@ def preprocess_data(df, match_stats_df, school_info_df):
 
     school_cols_sum = [f"seats9ge{i}" for i in range(1,12)] + [f"seats9swd{i}" for i in range(1,12)] 
     school_info_df['Capacity'] = school_info_df.apply(lambda x: sum(x[col] if pd.notnull(x[col]) else 0 for col in school_cols_sum), axis=1)
-    school_info_df =  school_info_df[['dbn','Capacity']]
+    
+    # Calculate Utilization from enrollment data
+    addtl_school_info_df = addtl_school_info_df[(addtl_school_info_df['Category'] == 'All Students') & (pd.to_numeric(addtl_school_info_df['Grade 9 Students'], errors='coerce').notna())]
+    addtl_school_info_df  = addtl_school_info_df[['School DBN', 'Grade 9 Students']]
+    addtl_school_info_df['Grade 9 Students'] = addtl_school_info_df['Grade 9 Students'].astype(int)
+    school_info_df = school_info_df[['dbn','Capacity']]
     school_info_df = school_info_df.rename(columns={'dbn': 'School DBN'})
-
     school_info_df = school_info_df[school_info_df['School DBN'].isin(df['School DBN'].unique())]
+    school_info_df = addtl_school_info_df.join(school_info_df.set_index('School DBN'), on='School DBN', how='inner')
+    school_info_df['Utilization'] = (school_info_df['Grade 9 Students'] / school_info_df['Capacity'] * 100).clip(upper=100)
+    school_info_df = school_info_df[['School DBN', 'Capacity', 'Utilization']]
 
     match_stats_df.columns = match_stats_df.iloc[0]
     match_stats_df = match_stats_df.drop(match_stats_df.index[0])
@@ -960,7 +967,9 @@ def run_real(outfile):
                                 sheet='Match to Choice-District')
     school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
                             sheet='Data')
-    df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df)
+    addtl_school_info_df = read_data('../Data-Analysis/raw-data/DATA2_fall-2024-admissions_part-ii_suppressed.xlsx',
+                            sheet='School')
+    df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df)
 
     log_and_print(f"df unique schools: {df['School DBN'].nunique()}", outfile)
     log_and_print(f"school_info_df rows: {len(school_info_df)}", outfile)

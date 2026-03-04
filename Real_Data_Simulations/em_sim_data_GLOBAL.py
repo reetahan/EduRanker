@@ -42,6 +42,7 @@ def preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df):
             dtype_mapping[df.columns.array[i]] = 'int64'
     df = df.astype(dtype_mapping)
 
+    print([x for x in sorted(school_info_df.columns)])
     school_cols_sum = [f"seats9ge{i}" for i in range(1,12)] + [f"seats9swd{i}" for i in range(1,12)] 
     school_info_df['Capacity'] = school_info_df.apply(lambda x: sum(x[col] if pd.notnull(x[col]) else 0 for col in school_cols_sum), axis=1)
     
@@ -275,13 +276,58 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
 
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
-    log_and_print(f" Aggregate results: {agg}", log_file=log_file)
+    #log_and_print(f" Aggregate results: {agg}", log_file=log_file)
     return agg
 
+def extract_realistic_params_from_real_data(df, school_info_df, n_schools=20, n_students=500):
+    """
+    Extract realistic central rankings and capacities from Manhattan districts 1-3.
+    Returns sigmas dict, capacities array, and schools list.
+    """
+    # Get top 20 schools by Ratio in District 1
+    df_d1 = df[df['Residential District'] == 1]
+    top20 = df_d1.sort_values('Ratio', ascending=False).head(n_schools)
+    top20_schools = top20['School DBN'].values.tolist()
+    
+    # Verify all 20 appear in districts 2 and 3
+    for d in [2, 3]:
+        df_d = df[df['Residential District'] == d]
+        missing = set(top20_schools) - set(df_d['School DBN'].values)
+        if missing:
+            print(f"  Warning: {len(missing)} schools missing from district {d}: {missing}")
+            # Fill missing schools at the bottom of that district's ranking
+    
+    # Build central rankings for each district based on Ratio ordering
+    true_sigmas = {}
+    for d in [1, 2, 3]:
+        df_d = df[(df['Residential District'] == d) & (df['School DBN'].isin(top20_schools))]
+        ranked = df_d.sort_values('Ratio', ascending=False)['School DBN'].values.tolist()
+        # Append any missing schools at the end
+        missing = [s for s in top20_schools if s not in ranked]
+        true_sigmas[d] = ranked + missing
+    
+    # Get real capacities and scale to target student count
+    cap_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
+    raw_caps = np.array([cap_dict.get(s, 0) for s in top20_schools])
+    
+    # Scale so total capacity ~ n_students * 1.2 (same ratio as 600/500)
+    total_target_capacity = int(n_students * 1.2)
+    scaled_caps = np.round(raw_caps / raw_caps.sum() * total_target_capacity).astype(int)
+
+    
+    print(f"  Extracted {n_schools} schools from real data")
+    print(f"  Total scaled capacity: {scaled_caps.sum()} for {n_students} students")
+    print(f"  D1 top 3: {true_sigmas[1][:3]}")
+    print(f"  D2 top 3: {true_sigmas[2][:3]}")
+    print(f"  D3 top 3: {true_sigmas[3][:3]}")
+    
+    return true_sigmas, scaled_caps, top20_schools
 
 def create_synthetic_experiment(n_students=500, n_schools=20, 
                                              capacity_per_school=30, k_ranking_length=10, 
-                                             true_K=1, district_ct =3, seed=42):
+                                             true_K=1, district_ct =3, seed=42,
+                                             external_sigmas=None, external_capacities=None,
+                                             external_schools=None):
     np.random.seed(seed)
     
     if true_K == 1:
@@ -294,22 +340,23 @@ def create_synthetic_experiment(n_students=500, n_schools=20,
         true_phis = np.array([0.15, 0.4, 0.7])
         true_weights = np.array([0.5, 0.3, 0.2])
     
-    schools_list = [f"SCHOOL_{i:02d}" for i in range(n_schools)]
+    if external_schools is not None:
+        schools_list = external_schools
+        n_schools = len(schools_list)
+    else:
+        schools_list = [f"SCHOOL_{i:02d}" for i in range(n_schools)]
     school_to_idx = {s: i for i, s in enumerate(schools_list)}
-    
     
     districts = list(range(1, district_ct + 1))
 
-    # We'll create 3 districts. To test "contention," let's give them 
-    # slightly different preferences for which schools are "Top".
-    # District 1 likes School 0-19 in order. 
-    # District 2 likes School 10-19 then 0-9. 
-    # District 3 likes odd then even schools.
-    true_sigmas = {
-        1: schools_list.copy(),
-        2: schools_list[10:] + schools_list[:10],
-        3: [s for i, s in enumerate(schools_list) if i%2==0] + [s for i, s in enumerate(schools_list) if i%2!=0]
-    }
+    if external_sigmas is not None:
+        true_sigmas = external_sigmas
+    else:
+        true_sigmas = {
+            1: schools_list.copy(),
+            2: schools_list[10:] + schools_list[:10],
+            3: [s for i, s in enumerate(schools_list) if i%2==0] + [s for i, s in enumerate(schools_list) if i%2!=0]
+        }
     
     student_districts = np.random.choice(districts, size=n_students)
     all_rankings = []
@@ -322,16 +369,19 @@ def create_synthetic_experiment(n_students=500, n_schools=20,
         all_rankings.append(ranking[:k_ranking_length])
         
     lottery = np.random.permutation(n_students)
-    capacities = np.array([capacity_per_school] * n_schools)
+    if external_capacities is not None:
+        capacities = external_capacities
+    else:
+        capacities = np.array([capacity_per_school] * n_schools)
     
     matches_idx = gale_shapley(all_rankings, lottery, capacities)
     matches_schools = np.array([schools_list[m] if m >= 0 else '-1' for m in matches_idx])
 
     utilization_counts = pd.Series(matches_schools).value_counts()
     school_info_df = pd.DataFrame([
-        {'School DBN': s, 'Capacity': capacity_per_school, 
-         'Utilization': (utilization_counts.get(s, 0) / capacity_per_school) * 100} 
-        for s in schools_list
+        {'School DBN': s, 'Capacity': capacities[i], 
+         'Utilization': (utilization_counts.get(s, 0) / capacities[i] * 100) if capacities[i] > 0 else 0} 
+        for i, s in enumerate(schools_list)
     ])
 
     match_stats_list = []
@@ -381,7 +431,7 @@ def create_synthetic_experiment(n_students=500, n_schools=20,
                 'Residential District': d_id, 
                 'Total Applicants by Residential District': total_apps,
                 'True Applicants by Residential District': true_apps_count,
-                'Ratio': (total_apps / capacity_per_school) 
+                'Ratio': (total_apps / capacities[s_idx]) if capacities[s_idx] > 0 else 0
             })
     
     df = pd.DataFrame(app_data)
@@ -633,7 +683,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     obs_util = school_info_df['Utilization'].values 
     util_penalty = -0.1 * np.mean((obs_util - sim_util)**2)
     
-    log_and_print()  # New line after progress indicator
+    log_and_print('')  # New line after progress indicator
     
     log_and_print("\n" + "="*60, log_file=outfile)
     log_and_print(f"FIT DIAGNOSTICS | Seed: {seed} | Iteration: {iteration}", log_file=outfile)
@@ -773,6 +823,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     return params, final_agg
 
+
 def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1):
     # util_error: Positive = school needs more students (move UP in ranking)
     real_util = (school_info_df['Utilization'] / 100) * school_info_df['Capacity']
@@ -803,7 +854,7 @@ def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):
     all_match_stats = []
     observed_stats = None
 
-    for seed in range(40, 45):
+    for seed in range(40, 42):
         log_and_print(f"\nRunning synthetic experiment with seed {seed}...", log_file=outfile)
         df3, match_stats_df3, school_info_df3, true_params3 = create_synthetic_experiment(
             n_students=500, n_schools=20, capacity_per_school=30,
@@ -961,6 +1012,125 @@ def run_synthetic_experiment_3_MoM_yes_utilization(outfile=None):
     plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot.png", dpi=150)
     plt.show()
 
+def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(outfile=None):
+    log_and_print("\n" + "="*60, log_file=outfile)
+    log_and_print("EXPERIMENT 3 MoM, Match Stats, Yes Utilization, Relevant Capacities, Central Rankings", log_file=outfile)
+    log_and_print("="*60, log_file=outfile)
+
+    df = read_data('data/master_data_03_residential_district.xlsx')
+    match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
+                                sheet='Match to Choice-District')
+    school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
+                            sheet='Data')
+    addtl_school_info_df = read_data('../Data-Analysis/raw-data/DATA2_fall-2024-admissions_part-ii_suppressed.xlsx',
+                            sheet='School')
+    df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df)
+    
+    all_match_stats = []
+    all_utilizations = []
+    observed_stats = None
+
+    real_sigmas, real_caps, real_schools = extract_realistic_params_from_real_data(
+        df, school_info_df, n_schools=20, n_students=500
+    )
+
+    for seed in range(40, 50):
+        log_and_print(f"\nRunning synthetic experiment with seed {seed}...")
+        df3, match_stats_df3, school_info_df3, true_params3 = create_synthetic_experiment(
+            n_students=500, n_schools=20, capacity_per_school=30,
+            k_ranking_length=10, true_K=3, district_ct=3, seed=DATA_GENERATION_SEED,
+            external_sigmas=real_sigmas, external_capacities=real_caps,
+            external_schools=real_schools
+        )
+
+        # Store observed once (same across seeds since data seed=DATA_GENERATION_SEED is fixed)
+        if observed_stats is None:
+            observed_stats = np.array([
+                match_stats_df3['% Matches to Choice 1-3'].iloc[0],
+                match_stats_df3['% Matches to Choice 1-5'].iloc[0],
+                match_stats_df3['% Matches to Choice 1-10'].iloc[0],
+                match_stats_df3['Unmatched'].iloc[0]
+            ])
+            true_utilization = school_info_df3['Utilization'].values / 100.0
+
+        params3, lottery3, log_liks3, agg = EM_algorithm(
+            df3, match_stats_df3, school_info_df3,
+            max_iter=10, M_simulations=10, K=3, seed=seed
+        )
+
+        all_match_stats.append(agg['match_stats'][0, :])
+        sim_util = agg['filled'] / school_info_df3['Capacity'].values
+        all_utilizations.append(sim_util)
+
+
+        out_lines = [
+            f"\nSEED {seed} RESULTS:",
+            f"  True phis: {true_params3['true_phis']}",
+            f"  Estimated phis: {params3['global_phis']}",
+            f"  Error: {np.abs(params3['global_phis'] - true_params3['true_phis'])}"
+        ]
+
+        for d_id, true_sigma in true_params3['true_sigmas'].items():
+            est_sigma = params3['districts'][d_id]['central_ranking']
+            
+            # Map schools to ranks for Kendall Tau (how similar is the ordering?)
+            school_to_true_rank = {s: i for i, s in enumerate(true_sigma)}
+            true_ranks = [school_to_true_rank[s] for s in true_sigma]
+            est_ranks = [school_to_true_rank[s] for s in est_sigma]
+            tau, _ = kendalltau(true_ranks, est_ranks)
+            
+            out_lines.append(f"  District {d_id} Sigma Kendall Tau: {tau:.4f}")
+            out_lines.append(f"    True Top 3: {true_sigma[:3]}")
+            out_lines.append(f"    Est  Top 3: {est_sigma[:3]}")
+
+        for line in out_lines:
+            log_and_print(line)
+        with open(f"{EXP_OUT_FOLDER}experiment3_3_dists_utils_results.txt", "a+") as f:
+            for line in out_lines:
+                f.write(line + "\n")
+                f.flush()
+
+    all_match_stats = np.array(all_match_stats)  
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.boxplot(all_match_stats, labels=['Top-3', 'Top-5', 'Top-10', 'Unmatched'])
+
+    for i, obs in enumerate(observed_stats):
+        ax.scatter(i + 1, obs, color='red', zorder=5, marker='D', 
+                label='Observed' if i == 0 else '')
+
+    ax.set_ylabel('Percentage (%)')
+    ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-49, Relevant Capacities and Central Rankings)')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)
+    plt.show()
+
+    all_util_array = np.array(all_utilizations) # Shape: (Seeds, Schools)
+    fig2, ax2 = plt.subplots(figsize=(12, 5))
+    
+    # Create boxplot for each school (columns of the array)
+    bp = ax2.boxplot(all_util_array, patch_artist=True)
+    
+    # Customize boxes
+    for patch in bp['boxes']:
+        patch.set_facecolor('lightblue')
+        patch.set_alpha(0.6)
+
+    # Overlay True Values
+    ax2.scatter(range(1, len(true_utilization) + 1), true_utilization, 
+                color='red', marker='D', s=30, zorder=5, label='True Observed Util')
+
+    ax2.set_xlabel('School Index')
+    ax2.set_ylabel('Utilization (Fraction of Capacity)')
+    ax2.set_title('School-Level Utilization: Simulated (Box) vs True (Red Diamond)')
+    ax2.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='100% Capacity')
+    ax2.legend()
+    
+    plt.tight_layout()
+    plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot.png", dpi=150)
+    plt.show()
+
 def run_real(outfile):
     df = read_data('data/master_data_03_residential_district.xlsx')
     match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
@@ -1002,8 +1172,8 @@ if __name__ == "__main__":
     if args.synthetic:
         # Run synthetic experiments
         #run_synthetic_experiment_3_MoM_no_utilization()
-        run_synthetic_experiment_3_MoM_yes_utilization()
-    
+        #run_synthetic_experiment_3_MoM_yes_utilization()
+        run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks()
     else:
         # Run on real data
         run_real(outfile=f"{EXP_OUT_FOLDER}run_main_1.txt")

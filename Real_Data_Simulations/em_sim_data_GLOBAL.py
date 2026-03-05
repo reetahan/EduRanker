@@ -89,7 +89,7 @@ def mallows_insertion_sampling(central_ranking, phi):
             ranking.append(item)
         else:
             positions = len(ranking) + 1
-            probs = np.array([phi ** j for j in range(positions)])
+            probs = np.array([phi ** (positions - 1 - j) for j in range(positions)])
             probs = probs / probs.sum()
             pos = np.random.choice(positions, p=probs)
             ranking.insert(pos, item)
@@ -591,7 +591,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
         
         obs_total = df_district.set_index('School DBN')['Ratio'].to_dict()
         
-        central_ranking = sorted(schools_list, key=lambda s: obs_total[s])
+        central_ranking = sorted(schools_list, key=lambda s: obs_total[s], reverse=True)
         
         params['districts'][district] = {
             'schools': schools_list,
@@ -823,28 +823,26 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     return params, final_agg
 
-
 def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1):
-    # util_error: Positive = school needs more students (move UP in ranking)
-    real_util = (school_info_df['Utilization'] / 100) * school_info_df['Capacity']
-    util_error = real_util.values - final_agg['filled']
+    sim_filled = pd.Series(final_agg['filled'], index=params['districts'][next(iter(params['districts']))]['schools']) # or your master schools list
+    real_util_counts = (school_info_df.set_index('School DBN')['Utilization'] / 100) * school_info_df.set_index('School DBN')['Capacity']
     
-    all_schools = list(school_info_df['School DBN'])
+    util_error = real_util_counts - sim_filled
     
     for d_id, d_data in params['districts'].items():
         if 'pop_scores' not in d_data:
             d_data['pop_scores'] = {s: (len(d_data['schools']) - i) 
                                    for i, s in enumerate(d_data['central_ranking'])}
         
-        for i, s_dbn in enumerate(all_schools):
+        for s_dbn, error in util_error.items():
             if s_dbn in d_data['pop_scores']:
-                d_data['pop_scores'][s_dbn] += eta * util_error[i]
+                d_data['pop_scores'][s_dbn] += eta * error 
         
-        # Sort by nudged scores to get new sigma
         new_sigma = sorted(d_data['pop_scores'].items(), key=lambda x: x[1], reverse=True)
         d_data['central_ranking'] = [s[0] for s in new_sigma]
         
     return params
+
 
 def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):
     log_and_print("\n" + "="*60, log_file=outfile)

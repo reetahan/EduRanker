@@ -290,14 +290,12 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
             ranking = ranking[:k_ranking_length]
             
             rankings.append(ranking)
-        
-        # Convert to school DBNs
+
         rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
         
         all_rankings.extend(rankings_as_schools)
         all_district_assignments.extend([district] * n_students)
     
-    # Rest is same as before
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
     
@@ -1077,14 +1075,15 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
                             sheet='School')
     df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df)
     
-    # When doing final analysis, load accumulated results
     if not single_seed:
         all_match_stats = []
         all_utilizations = []
         true_utilization = None
         observed_stats = None
         
-        for s in range(40, 139):
+        start_seed = 40
+        end_seed = 139
+        for s in range(start_seed, end_seed + 1):
             match_stats_file = f"{EXP_OUT_FOLDER}temp_match_stats_seed_{s}.npy"
             util_file = f"{EXP_OUT_FOLDER}temp_utilizations_seed_{s}.npy"
             if os.path.isfile(match_stats_file) and os.path.isfile(util_file):
@@ -1114,7 +1113,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
                         label='Observed' if i == 0 else '')
 
         ax.set_ylabel('Percentage (%)')
-        ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-49, Relevant Capacities and Central Rankings)')
+        ax.set_title(f'Match Statistics: Simulated vs Observed (K=3, Seeds {start_seed}-{end_seed}, Relevant Capacities and Central Rankings)')
         ax.legend()
         plt.tight_layout()
         plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)

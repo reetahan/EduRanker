@@ -18,6 +18,6 @@ echo "Final Analysis Start: $TIMESTAMP" 2>&1 | tee -a /scratch/rm6609/EduRanker/
 echo "Running final analysis on accumulated results..." 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_final_analysis.log
 echo "========================================" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_final_analysis.log
 
-singularity exec --fakeroot --overlay /scratch/rm6609/research/overlay-15GB-500K.ext3:rw /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif /bin/bash -c "source /ext3/env.sh && conda activate research && time python3 /scratch/rm6609/EduRanker/Real_Data_Simulations/em_sim_data_GLOBAL.py --synthetic --final-analysis" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_final_analysis.log
+singularity exec --fakeroot --overlay /scratch/rm6609/research/overlay-15GB-500K.ext3:ro /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif /bin/bash -c "source /ext3/env.sh && conda activate research && time python3 /scratch/rm6609/EduRanker/Real_Data_Simulations/em_sim_data_GLOBAL.py --synthetic --final-analysis" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_final_analysis.log
 
 echo "Final Analysis End: $(date '+%Y-%m-%d_%H-%M-%S')" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_final_analysis.log

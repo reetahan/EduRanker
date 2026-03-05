@@ -798,7 +798,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             objective_global_phi_k,
             bounds=(0.01, 0.99),
             method='bounded',
-            options={'xatol': 0.01}
+            options={'xatol': 0.01, 'maxiter': 10}
         )
         params['global_phis'][k] = result.x
 

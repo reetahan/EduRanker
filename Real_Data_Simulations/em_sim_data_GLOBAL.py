@@ -11,6 +11,56 @@ import os
 EXP_OUT_FOLDER = "experiment-results/"
 DATA_GENERATION_SEED = 44
 
+def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
+    ranks = {}
+    for d in [1, 2, 3]:
+        for rank, s in enumerate(real_sigmas[d], 1):
+            ranks[(d, s)] = rank
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), gridspec_kw={'width_ratios': [1, 1.4]})
+
+    # Bar chart sorted by capacity
+    sort_idx = np.argsort(real_caps)[::-1]
+    sorted_schools = [real_schools[i] for i in sort_idx]
+    sorted_caps = real_caps[sort_idx]
+    colors = ['#c0392b' if c > 50 else '#2980b9' for c in sorted_caps]
+    ax1.barh(range(len(sorted_schools)), sorted_caps, color=colors, edgecolor='white', linewidth=0.5)
+    ax1.set_yticks(range(len(sorted_schools)))
+    #ax1.set_yticklabels(sorted_schools, fontsize=8, fontfamily='monospace')
+    sorted_indices = [real_schools.index(s) + 1 for s in sorted_schools]
+    ax1.set_yticklabels([f'School {idx} |' for idx in sorted_indices], fontsize=8)
+    ax1.invert_yaxis()
+    ax1.set_xlabel('Scaled Capacity (seats)')
+    ax1.set_title('Capacity Distribution', fontweight='bold')
+    ax1.axvline(x=np.median(real_caps), color='gray', linestyle='--', alpha=0.7, label=f'Median={np.median(real_caps):.0f}')
+    ax1.axvline(x=np.mean(real_caps), color='orange', linestyle='--', alpha=0.7, label=f'Mean={np.mean(real_caps):.0f}')
+    ax1.legend(fontsize=8)
+
+    # Rank heatmap
+    n = len(real_schools)
+    rank_matrix = np.zeros((n, 3))
+    for i, s in enumerate(real_schools):
+        for j, d in enumerate([1, 2, 3]):
+            rank_matrix[i, j] = ranks[(d, s)]
+
+    im = ax2.imshow(rank_matrix, cmap='RdYlGn_r', aspect='auto', vmin=1, vmax=20)
+    ax2.set_xticks([0, 1, 2])
+    ax2.set_xticklabels(['District 1', 'District 2', 'District 3'], fontweight='bold')
+    ax2.set_yticks(range(n))
+    ax2.set_yticklabels([f'{s}  (cap={real_caps[i]})' for i, s in enumerate(real_schools)],
+                         fontsize=7.5, fontfamily='monospace')
+    ax2.set_title('Preference Rank by District\n(1=most preferred, 20=least)', fontweight='bold')
+    for i in range(n):
+        for j in range(3):
+            r = int(rank_matrix[i, j])
+            color = 'white' if r <= 3 or r >= 18 else 'black'
+            ax2.text(j, i, str(r), ha='center', va='center', fontsize=8, color=color, fontweight='bold')
+    plt.colorbar(im, ax=ax2, shrink=0.8, label='Rank (1=top)')
+
+    plt.tight_layout()
+    plt.savefig(f'{EXP_OUT_FOLDER}capacity_and_rankings.png', dpi=200, bbox_inches='tight')
+    plt.show()
+
 def read_data(file_path, sheet=0):
     """
     Reads data from the given file path and returns a pandas DataFrame.
@@ -279,7 +329,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     #log_and_print(f" Aggregate results: {agg}", log_file=log_file)
     return agg
 
-def extract_realistic_params_from_real_data(df, school_info_df, n_schools=20, n_students=500):
+def extract_realistic_params_from_real_data(df, school_info_df, n_schools=20, n_students=500, if_plot=False):
     """
     Extract realistic central rankings and capacities from Manhattan districts 1-3.
     Returns sigmas dict, capacities array, and schools list.
@@ -313,6 +363,9 @@ def extract_realistic_params_from_real_data(df, school_info_df, n_schools=20, n_
     # Scale so total capacity ~ n_students * 1.2 (same ratio as 600/500)
     total_target_capacity = int(n_students * 1.2)
     scaled_caps = np.round(raw_caps / raw_caps.sum() * total_target_capacity).astype(int)
+
+    if(if_plot):
+        plot_capacity_and_sigmas(top20_schools, scaled_caps, true_sigmas)
 
     
     print(f"  Extracted {n_schools} schools from real data")
@@ -1031,7 +1084,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
         true_utilization = None
         observed_stats = None
         
-        for s in range(40, 120):
+        for s in range(40, 139):
             match_stats_file = f"{EXP_OUT_FOLDER}temp_match_stats_seed_{s}.npy"
             util_file = f"{EXP_OUT_FOLDER}temp_utilizations_seed_{s}.npy"
             if os.path.isfile(match_stats_file) and os.path.isfile(util_file):
@@ -1061,7 +1114,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
                         label='Observed' if i == 0 else '')
 
         ax.set_ylabel('Percentage (%)')
-        ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-119, Relevant Capacities and Central Rankings)')
+        ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-49, Relevant Capacities and Central Rankings)')
         ax.legend()
         plt.tight_layout()
         plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)
@@ -1096,7 +1149,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
     observed_stats = None
 
     real_sigmas, real_caps, real_schools = extract_realistic_params_from_real_data(
-        df, school_info_df, n_schools=20, n_students=500
+        df, school_info_df, n_schools=20, n_students=500, if_plot=False
     )
 
     log_and_print(f"\nRunning synthetic experiment with seed {seed}...")

@@ -19,3 +19,4 @@ echo "========================================" 2>&1 | tee -a /scratch/rm6609/Ed
 singularity exec --fakeroot --overlay /scratch/rm6609/research/overlay-15GB-500K.ext3:ro /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif /bin/bash -c "source /ext3/env.sh && conda activate research && time python3 /scratch/rm6609/EduRanker/Real_Data_Simulations/em_sim_data_GLOBAL.py" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_%j.log
 
 echo "Real Data Analysis End: $(date '+%Y-%m-%d_%H-%M-%S')" 2>&1 | tee -a /scratch/rm6609/EduRanker/Real_Data_Simulations/job_%j.log
+

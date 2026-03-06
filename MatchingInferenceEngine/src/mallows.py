@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def mallows_insertion_sampling(central_ranking, phi):
     n = len(central_ranking)
     ranking = []

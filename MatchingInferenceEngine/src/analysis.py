@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from config import EXP_OUT_FOLDER
 
 def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
     ranks = {}
@@ -50,3 +51,12 @@ def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
     plt.tight_layout()
     plt.savefig(f'{EXP_OUT_FOLDER}capacity_and_rankings.png', dpi=200, bbox_inches='tight')
     plt.show()
+
+def log_and_print(message, log_file=None):
+    """Print to console and optionally write to file with immediate flush"""
+    print(message)
+    if log_file is not None:
+        f = open(log_file, "a+")
+        f.write(message + '\n')
+        f.flush()
+        f.close()

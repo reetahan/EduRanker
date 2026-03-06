@@ -1,6 +1,7 @@
 
 import pandas as pd
 import numpy as np
+from analysis import log_and_print
 
 def read_data(file_path, sheet=0):
     """
@@ -11,15 +12,6 @@ def read_data(file_path, sheet=0):
     else:
         data = pd.read_excel(file_path, sheet_name=sheet)
     return data
-
-def log_and_print(message, log_file=None):
-    """Print to console and optionally write to file with immediate flush"""
-    print(message)
-    if log_file is not None:
-        f = open(log_file, "a+")
-        f.write(message + '\n')
-        f.flush()
-        f.close()
 
 def extract_observed_aggregates(df, match_stats_df):
     """

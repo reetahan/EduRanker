@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+from analysis import log_and_print
 
 def compute_aggregates(student_rankings, matches, district_assignments, schools_list):
     n_students = len(student_rankings)

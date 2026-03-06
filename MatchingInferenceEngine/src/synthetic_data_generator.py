@@ -1,5 +1,8 @@
 import numpy as np
 import pandas as pd
+from analysis import plot_capacity_and_sigmas
+from gale_shapley import gale_shapley, compute_aggregates
+from mallows import mallows_insertion_sampling
 
 def extract_realistic_params_from_real_data(df, school_info_df, n_schools=20, n_students=500, if_plot=False):
     """

@@ -7,7 +7,7 @@ from analysis import log_and_print
 from data_ingestion import read_data, preprocess_data
 from em import EM_algorithm, run_single_simulation
 from synthetic_data_generator import create_synthetic_experiment, extract_realistic_params_from_real_data
-from config import EXP_OUT_FOLDER, DATA_GENERATION_SEED
+from config import EXP_OUT_FOLDER, DATA_GENERATION_SEED, RAW_DATA_DIR, POLISHED_DATA_DIR
 
 def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):
     log_and_print("\n" + "="*60, log_file=outfile)
@@ -180,12 +180,13 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
     log_and_print("EXPERIMENT 3 MoM, Match Stats, Yes Utilization, Relevant Capacities, Central Rankings", log_file=outfile)
     log_and_print("="*60, log_file=outfile)
 
-    df = read_data('data/master_data_03_residential_district.xlsx')
-    match_stats_df = read_data('../Data-Analysis/raw-data/DATA3_fall-2024-high-school-offer-results-website-1.xlsx',
+    
+    df = read_data(f"{POLISHED_DATA_DIR}/master_data_03_residential_district.xlsx")
+    match_stats_df = read_data(f"{RAW_DATA_DIR}/DATA3_fall-2024-high-school-offer-results-website-1.xlsx",
                                 sheet='Match to Choice-District')
-    school_info_df = read_data('../Data-Analysis/raw-data/DATA4_fall-2025---hs-directory-data.xlsx',
+    school_info_df = read_data(f"{RAW_DATA_DIR}/DATA4_fall-2025---hs-directory-data.xlsx",
                             sheet='Data')
-    addtl_school_info_df = read_data('../Data-Analysis/raw-data/DATA2_fall-2024-admissions_part-ii_suppressed.xlsx',
+    addtl_school_info_df = read_data(f"{RAW_DATA_DIR}/DATA2_fall-2024-admissions_part-ii_suppressed.xlsx",
                             sheet='School')
     df, match_stats_df, school_info_df = preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df)
     
@@ -250,7 +251,7 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
             ax2.legend()
             
             plt.tight_layout()
-            plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot.png", dpi=150)
+            plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)
             plt.close()
         
         log_and_print(f"Final analysis complete. Processed {len(all_match_stats)} seeds.", log_file=outfile)

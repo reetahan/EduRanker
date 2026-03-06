@@ -56,7 +56,6 @@ def preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df):
             dtype_mapping[df.columns.array[i]] = 'int64'
     df = df.astype(dtype_mapping)
 
-    print([x for x in sorted(school_info_df.columns)])
     school_cols_sum = [f"seats9ge{i}" for i in range(1,12)] + [f"seats9swd{i}" for i in range(1,12)] 
     school_info_df['Capacity'] = school_info_df.apply(lambda x: sum(x[col] if pd.notnull(x[col]) else 0 for col in school_cols_sum), axis=1)
     

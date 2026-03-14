@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 from em import EM_algorithm
 from data_ingestion import read_data, preprocess_data
 from analysis import log_and_print
@@ -26,10 +27,9 @@ def run_real(outfile, max_iter=5, M=5, K=12):
         outfile=outfile
     )
     log_and_print(f"===== FINAL RESULTS =====", outfile)
-    log_and_print(params, outfile=outfile)
-    log_and_print(final_agg, outfile=outfile)
-    log_and_print(log_likelihoods, outfile=outfile)
-
+    log_and_print(params, log_file=outfile)
+    log_and_print(final_agg, log_file=outfile)
+    log_and_print(log_likelihoods, log_file=outfile)
 
 
 if __name__ == "__main__":
@@ -42,4 +42,6 @@ if __name__ == "__main__":
     parser.add_argument('--final-analysis', action='store_true', help='Run final aggregation and plotting step')
     args = parser.parse_args()
     
-    run_real(outfile=f'{EXP_OUT_FOLDER}real_experiment_results.txt', max_iter=args.max_iter , M=args.M, K=args.K)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outfile = f'{EXP_OUT_FOLDER}real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_{timestamp}.txt'
+    run_real(outfile=outfile, max_iter=args.max_iter , M=args.M, K=args.K)

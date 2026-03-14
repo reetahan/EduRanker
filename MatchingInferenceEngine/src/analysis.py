@@ -54,9 +54,10 @@ def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
 
 def log_and_print(message, log_file=None):
     """Print to console and optionally write to file with immediate flush"""
-    print(message)
+    text = str(message)
+    print(text, flush=True)
     if log_file is not None:
-        f = open(log_file, "a+")
-        f.write(message + '\n')
+        f = open(log_file, "a+", buffering=1)
+        f.write(text + '\n')
         f.flush()
         f.close()

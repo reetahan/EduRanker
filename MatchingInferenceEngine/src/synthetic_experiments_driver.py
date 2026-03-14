@@ -3,6 +3,7 @@ import argparse
 import os
 import matplotlib.pyplot as plt
 from scipy.stats import kendalltau
+from datetime import datetime
 from analysis import log_and_print
 from data_ingestion import read_data, preprocess_data
 from em import EM_algorithm, run_single_simulation
@@ -65,10 +66,11 @@ def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):
                 label='Observed' if i == 0 else '')
 
     ax.set_ylabel('Percentage (%)')
-    ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-49)')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ax.set_title('Match Statistics: Simulated vs Observed (K=2, Seeds 40-49)')
     ax.legend()
     plt.tight_layout()
-    plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K2.png", dpi=150)
+    plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_K2_seeds40-49_{timestamp}.png", dpi=150)
     plt.show()
 
 def run_synthetic_experiment_3_MoM_yes_utilization(outfile=None):
@@ -144,10 +146,11 @@ def run_synthetic_experiment_3_MoM_yes_utilization(outfile=None):
                 label='Observed' if i == 0 else '')
 
     ax.set_ylabel('Percentage (%)')
-    ax.set_title('Match Statistics: Simulated vs Observed (K=3, Seeds 40-49)')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ax.set_title('Match Statistics: Simulated vs Observed (K=3, 3 Districts, Seeds 40-49)')
     ax.legend()
     plt.tight_layout()
-    plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K3_3_dists_utils.png", dpi=150)
+    plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_K3_3dists_seeds40-49_{timestamp}.png", dpi=150)
     plt.show()
 
     all_util_array = np.array(all_utilizations) # Shape: (Seeds, Schools)
@@ -170,9 +173,11 @@ def run_synthetic_experiment_3_MoM_yes_utilization(outfile=None):
     ax2.set_title('School-Level Utilization: Simulated (Box) vs True (Red Diamond)')
     ax2.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='100% Capacity')
     ax2.legend()
+    ax2.set_title('School-Level Utilization: Simulated vs True (K=3, 3 Districts, Seeds 40-49)')
     
     plt.tight_layout()
-    plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot.png", dpi=150)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot_K3_3dists_seeds40-49_{timestamp}.png", dpi=150)
     plt.show()
 
 def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(seed=40, single_seed=True, outfile=None):
@@ -228,10 +233,11 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
                         label='Observed' if i == 0 else '')
 
         ax.set_ylabel('Percentage (%)')
-        ax.set_title(f'Match Statistics: Simulated vs Observed (K=3, Seeds {start_seed}-{end_seed}, Relevant Capacities and Central Rankings)')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ax.set_title(f'Match Statistics: Simulated vs Observed (K=3, 3 Districts, Real Capacities/Rankings, Seeds {start_seed}-{end_seed})')
         ax.legend()
         plt.tight_layout()
-        plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)
+        plt.savefig(f"{EXP_OUT_FOLDER}match_stats_boxplot_K3_3dists_realcaps_seeds{start_seed}-{end_seed}_{timestamp}.png", dpi=150)
         plt.close()
 
         if true_utilization is not None:
@@ -249,9 +255,11 @@ def run_synthetic_experiment_3_MoM_yes_utilization_relevant_caps_central_ranks(s
             ax2.set_title('School-Level Utilization: Simulated (Box) vs True (Red Diamond)')
             ax2.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='100% Capacity')
             ax2.legend()
+            ax2.set_title(f'School-Level Utilization: Simulated vs True (K=3, 3 Districts, Real Capacities/Rankings, Seeds {start_seed}-{end_seed})')
             
             plt.tight_layout()
-            plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot_v2_K3_3_dists_utils_rel_ranks_caps.png", dpi=150)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            plt.savefig(f"{EXP_OUT_FOLDER}school_utilization_boxplot_K3_3dists_realcaps_seeds{start_seed}-{end_seed}_{timestamp}.png", dpi=150)
             plt.close()
         
         log_and_print(f"Final analysis complete. Processed {len(all_match_stats)} seeds.", log_file=outfile)

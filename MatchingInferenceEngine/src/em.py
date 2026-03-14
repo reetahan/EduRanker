@@ -16,10 +16,6 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
         params: Global mixture structure with 'global_phis', 'global_weights', 'districts'
     """
 
-    log_file = None
-    if outfile:
-        log_file = open(outfile, 'w', buffering=1)
-    
     all_rankings = []
     all_district_assignments = []
     
@@ -100,9 +96,6 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     """
     
     np.random.seed(seed)
-    log_file = None
-    if outfile:
-        log_file = open(outfile, 'w', buffering=1)
     
     log_and_print("="*60, log_file=outfile)
     log_and_print("EM ALGORITHM - GLOBAL MIXTURE", log_file=outfile)
@@ -138,7 +131,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         params, final_agg = optimize_global_mixture(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration
+            iteration=iteration, outfile=outfile
         )
 
         # Sort them to remove indexing ambiguity
@@ -230,17 +223,16 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     Returns:
         total_log_lik: Sum of log-likelihoods across all districts
     """
-    log_file = None
-    if outfile:
-        log_file = open(outfile, 'w', buffering=1)
-
     districts = sorted(observed_agg.keys())
     n_students_total = int(match_stats_df['Total Applicants'].sum())
     
     # Run M simulations, collecting stats for all districts
     simulated_samples = {d: [] for d in districts}
 
-    total_filled = np.zeros(len(school_info_df))
+    # Initialize based on actual unique schools in df, not school_info_df rows
+    all_schools = df['School DBN'].unique()
+    capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
+    total_filled = np.zeros(len(all_schools))
     
     # Fixed lottery across all M simulations
     rng_lottery = np.random.default_rng(seed=seed)
@@ -266,9 +258,13 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
             simulated_samples[district].append(agg_vec)
     
     mean_filled = total_filled / M
-    sim_util = mean_filled / school_info_df['Capacity'].values * 100
+    # Get capacities in same order as all_schools
+    capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
+    sim_util = mean_filled / capacities * 100
 
-    obs_util = school_info_df['Utilization'].values 
+    # Get observed utilization only for schools we have
+    obs_util_dict = school_info_df.set_index('School DBN')['Utilization'].to_dict()
+    obs_util = np.array([obs_util_dict.get(s, 0) for s in all_schools])
     util_penalty = -0.1 * np.mean((obs_util - sim_util)**2)
     
     log_and_print('')  # New line after progress indicator
@@ -361,7 +357,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     return total_log_lik + util_penalty
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
-                            school_info_df, M=20, seed=42, iteration=1):
+                            school_info_df, M=20, seed=42, iteration=1, outfile=None):
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     
@@ -376,7 +372,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
            
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
-                school_info_df, M=M, seed=seed, iteration=iteration
+                school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile
             )
             
             params['global_phis'][k] = original_phi

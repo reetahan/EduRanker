@@ -7,6 +7,7 @@
 #SBATCH --time=24:00:00             
 #SBATCH --account=torch_pr_594_general
 #SBATCH --output=/scratch/rm6609/EduRanker/MatchingInferenceEngine/experiment-results/mass-sim-logs/job_%A_%a.log
+#SBATCH --mail-user=rm6609@nyu.edu
 
 SEED=40
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')

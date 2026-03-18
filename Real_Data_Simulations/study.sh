@@ -4,7 +4,7 @@
 #SBATCH --nodes=1                    
 #SBATCH --cpus-per-task=4             
 #SBATCH --mem=8GB                     
-#SBATCH --time=24:10:00             
+#SBATCH --time=48:10:00             
 #SBATCH --account=torch_pr_594_general
 #SBATCH --output=/scratch/rm6609/EduRanker/Real_Data_Simulations/job_%j.log  # The output will be saved here. %j will be replaced by the slurm job ID
 #SBATCH --mail-user=rm6609@nyu.edu   # Email address

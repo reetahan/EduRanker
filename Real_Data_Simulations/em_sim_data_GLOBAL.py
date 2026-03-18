@@ -730,6 +730,8 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     
     mean_filled = total_filled / M
     sim_util = mean_filled / school_info_df['Capacity'].values * 100
+    #print(f"  Simulated utilization: {sim_util:.2f}%")
+    #exit(1)
 
     obs_util = school_info_df['Utilization'].values 
     util_penalty = -0.1 * np.mean((obs_util - sim_util)**2)

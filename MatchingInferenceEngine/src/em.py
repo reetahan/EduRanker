@@ -5,86 +5,66 @@ import copy
 from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates
-from mallows import mallows_insertion_sampling
+from mallows import sample_students_global_mixture
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global, k_ranking_length=10, M_val=1, outfile=None):
+                         lottery_global, k_ranking_length=10, outfile=None,
+                         sampling_n_jobs=1, sampling_chunk_size=1000,
+                         sampling_log_progress=False, sampling_progress_every=5000):
     """
-    Run one simulation with GLOBAL MIXTURE parameters
-    
-    Args:
-        params: Global mixture structure with 'global_phis', 'global_weights', 'districts'
+    Run one simulation with GLOBAL MIXTURE parameters.
+    Updated to support parallelized Mallows sampling.
     """
-
     all_rankings = []
     all_district_assignments = []
-    
     districts = list(params['districts'].keys())
-    global_phis = params['global_phis']
-    global_weights = params['global_weights']
-    K = len(global_phis)
     
-    for district in  districts:
+    for district in districts:
         n_students = int(match_stats_df[
             match_stats_df['Residential District'] == district
         ]['Total Applicants'].iloc[0])
+        
         log_and_print(f"Handling district {district} with {n_students} students", outfile)
-        # Get district-specific info
-        sigma_d = params['districts'][district]['central_ranking']
-        schools_list = params['districts'][district]['schools']
-        school_to_idx = {s: i for i, s in enumerate(schools_list)}
         
-        #log_and_print(f" Generating rankings for {n_students} students of length {k_ranking_length} amongst {len(schools_list)} schools")
-        
-        # Sample from global mixture
-        rankings = []
-        for _ in range(n_students):
-            # Choose component from global mixture
-            k = np.random.choice(K, p=global_weights)
-            
-            # Sample from Mallows(σ_d, φ_k)
-            sigma_indices = np.array([school_to_idx[s] for s in sigma_d])
-            ranking = mallows_insertion_sampling(sigma_indices, global_phis[k])
-            
-            # Truncate to k schools
-            ranking = ranking[:k_ranking_length]
-            
-            rankings.append(ranking)
+        # Generate a unique seed for this district/simulation combo
+        district_seed = int(np.random.randint(0, 2**32 - 1))
 
+        # Call your new parallelized function
+        rankings = sample_students_global_mixture(
+            params=params,
+            district=district,
+            n_students=n_students,
+            n_jobs=sampling_n_jobs,
+            chunk_size=sampling_chunk_size,
+            random_seed=district_seed,
+            log_progress=sampling_log_progress,
+            progress_every=sampling_progress_every,
+            log_file=outfile,
+        )
+        
+        # Truncate to desired ranking length (top 10)
+        rankings = [ranking[:k_ranking_length] for ranking in rankings]
+
+        # Convert indices back to School DBN strings for Gale-Shapley
+        schools_list = params['districts'][district]['schools']
         rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
         
         all_rankings.extend(rankings_as_schools)
         all_district_assignments.extend([district] * n_students)
     
+    # --- Standard Gale-Shapley Logic ---
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
     
-    rankings_as_indices = []
-    for ranking in all_rankings:
-        rankings_as_indices.append(np.array([school_to_idx[s] for s in ranking]))
-    
+    rankings_as_indices = [np.array([school_to_idx[s] for s in r]) for r in all_rankings]
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    log_and_print(f"  Total schools: {len(all_schools)}, Total capacity: {capacities.sum()}, Total students: {len(all_rankings)}", log_file=outfile)
-
+    
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
 
-    num_matched = np.sum(matches_idx >= 0)
-    num_unmatched = np.sum(matches_idx == -1)
-    log_and_print(f"    Matched: {num_matched}/{len(matches_idx)}, Unmatched: {num_unmatched}", log_file=outfile)
-
-    if num_matched > 0:
-        match_positions = []
-        for i, ranking in enumerate(rankings_as_indices):
-            if matches_idx[i] >= 0:
-                match_pos = np.where(ranking == matches_idx[i])[0]
-                if len(match_pos) > 0:
-                    match_positions.append(match_pos[0])
-
     agg = compute_aggregates(all_rankings, matches_schools, 
                             np.array(all_district_assignments), all_schools)
-    #log_and_print(f" Aggregate results: {agg}", log_file=log_file)
     return agg
 
 
@@ -131,7 +111,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         params, final_agg = optimize_global_mixture(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration, outfile=outfile
+            iteration=iteration, outfile=outfile, sampling_n_jobs=32
         )
 
         # Sort them to remove indexing ambiguity

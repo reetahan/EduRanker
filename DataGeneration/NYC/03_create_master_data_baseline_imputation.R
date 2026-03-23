@@ -50,7 +50,7 @@ applications_by_school <- read_excel(paste0(data_path,"/fall-2024-admissions-72-
 ## Sum of applications by school (from 02_create_school_applicants)
 # Rows: 422
 # Col: 10
-school_applicants_02 <- read_excel("outputs/02_school_applicants.xlsx")
+school_applicants_02 <- read_excel("DataGeneration/NYC/outputs/02_school_applicants.xlsx")
 school_applicants_02 <- school_applicants_02 %>%
   select(`School DBN`, `Grade 9 Total Applicants`, `Grade 9 True Applicants`) %>%
   rename(
@@ -149,7 +149,7 @@ imputed_datasets_post <- map(runs, "data") %>%
 
 
 # Save -------------------------------------------------------------------------
-out_dir <- "outputs/data_baseline_imputation"
+out_dir <- "DataGeneration/NYC/outputs/data_baseline_imputation"
 csv_dir <- file.path(out_dir, "csv")
 
 walk2(

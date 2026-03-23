@@ -258,7 +258,7 @@ data_01 <- data_01 %>%
 
 
 # Save
-write_xlsx(data_01, "outputs/01_school_capacity.xlsx")
+write_xlsx(data_01, "DataGeneration/NYC/outputs/01_school_capacity.xlsx")
 
 ## Validation Check ------------------------------------------------------------
 

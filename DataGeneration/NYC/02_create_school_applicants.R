@@ -40,14 +40,12 @@ library(stringr)
 
 # Load data --------------------------------------------------------------------
 
-# Set directory 
-setwd("/Users/clarastrasser/Desktop/projects/r/EduRanker/Data_Generation/")
-
-# Set path
-data_path <- "/Users/clarastrasser/lilyhammer/data/24:25"
+# Set path to data folder
+# The folder should contain the downloaded data sets
+data_path <- Sys.getenv("DATA_PATH_NYC")
 
 # Load functions
-source("src/convert_s.R")
+source("DataGeneration/NYC/src/convert_s.R")
 
 # Load data sets
 

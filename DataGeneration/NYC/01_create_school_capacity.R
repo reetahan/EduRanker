@@ -40,14 +40,12 @@ library(stringr)
 
 # Load data --------------------------------------------------------------------
 
-# Set directory 
-setwd("/Users/clarastrasser/Desktop/projects/r/EduRanker/Data_Generation/")
-
-# Set path
-data_path <- "/Users/clarastrasser/lilyhammer/data/24:25"
+# Set path to data folder
+# The folder should contain the downloaded data sets
+data_path <- Sys.getenv("DATA_PATH_NYC")
 
 # Load functions
-source("src/convert_s.R")
+source("DataGeneration/NYC/src/convert_s.R")
 
 # Load data sets
 
@@ -69,9 +67,7 @@ enrollments_by_school <- read_excel(paste0(data_path,"/fall-2024-admissions_part
 directory_data_by_school <- read_excel(paste0(data_path,"/fall-2025---hs-directory-data.xlsx"), 
                                        sheet = "Data")
 
-
-
-# DATA 01 ---------------------------------------------------------------
+# DATA 01 ----------------------------------------------------------------------
 # Capacity by school data set
 
 ## Prepare ---------------------------------------------------------------------
@@ -100,7 +96,6 @@ applications_by_school_01 <- applications_by_school_01 %>%
 
 ## 1.2)
 
-
 # Keep relevant columns
 enrollments_by_school_01 <- enrollments_by_school %>%
   select( `School DBN`, 
@@ -118,7 +113,6 @@ enrollments_by_school_01 <- enrollments_by_school_01 %>%
   filter(Category == "All Students") %>%
   filter(!is.na(`Grade 9 Students`)) 
 
-
 # Check duplicates
 duplicates <- enrollments_by_school_01  %>%
   filter(duplicated(across(c(`School DBN`, Category))) |
@@ -131,8 +125,6 @@ enrollments_by_school_01 <- enrollments_by_school_01 %>%
   group_by(`School DBN`, Category) %>%
   slice_max(`Grade 9 Students`, n = 1, with_ties = FALSE) %>%
   ungroup()
-
-
 
 # 2.1)
 

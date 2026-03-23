@@ -39,7 +39,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--df-filepath', type=str, default=None, help='Filepath to input dataframe (xlsx file)')
-    parser.add_argument('--K', type=int, default=12, help='Number of mixture components for real data')
+    parser.add_argument('--K', type=int, default=5, help='Number of mixture components for real data')
     parser.add_argument('--M', type=int, default=5, help='Number of simulations per evaluation')
     parser.add_argument('--max_iter', type=int, default=5, help='Maximum EM iterations')
     parser.add_argument('--seed', type=int, default=40, help='Random seed for synthetic experiments')

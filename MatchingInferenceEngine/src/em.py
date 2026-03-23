@@ -9,7 +9,7 @@ from mallows import sample_students_global_mixture
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
                          lottery_global, k_ranking_length=10, outfile=None,
-                         sampling_n_jobs=1, sampling_chunk_size=1000,
+                         sampling_n_jobs=32, sampling_chunk_size=1000,
                          sampling_log_progress=False, sampling_progress_every=5000):
     """
     Run one simulation with GLOBAL MIXTURE parameters.
@@ -163,8 +163,8 @@ def initialize_parameters_global_mixture(districts, df, K=1):
     """
     
     # Global mixture parameters (shared across districts)
-    global_phis = np.random.beta(5, 1, K)
-    global_phis = np.clip(global_phis, 0.75, 0.99)
+    global_phis = np.random.beta(3, 2, K)
+    global_phis = np.clip(global_phis, 0.5, 0.99)
     
     global_weights = np.ones(K) / K  # Uniform initially
     
@@ -227,7 +227,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         # Simulate ALL districts together (do this ONCE per M iteration)
         agg = run_single_simulation(
             params_global, df, match_stats_df, school_info_df, 
-            lottery_fixed, M_val=sim, outfile=outfile
+            lottery_fixed, outfile=outfile
         )
 
         total_filled += agg['filled']
@@ -240,12 +240,19 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     mean_filled = total_filled / M
     # Get capacities in same order as all_schools
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    sim_util = mean_filled / capacities * 100
+    sim_util = np.full_like(mean_filled, np.nan, dtype=float)
+    np.divide(mean_filled, capacities, out=sim_util, where=capacities > 0)
+    sim_util = sim_util * 100
 
     # Get observed utilization only for schools we have
     obs_util_dict = school_info_df.set_index('School DBN')['Utilization'].to_dict()
-    obs_util = np.array([obs_util_dict.get(s, 0) for s in all_schools])
-    util_penalty = -0.1 * np.mean((obs_util - sim_util)**2)
+    obs_util = np.array([obs_util_dict.get(s, np.nan) for s in all_schools], dtype=float)
+    util_valid_mask = np.isfinite(obs_util) & np.isfinite(sim_util)
+    if np.any(util_valid_mask):
+        util_penalty = -0.1 * np.mean((obs_util[util_valid_mask] - sim_util[util_valid_mask])**2)
+    else:
+        util_penalty = 0.0
+        log_and_print("Warning: No valid utilization pairs after NaN filtering.", log_file=outfile)
     
     log_and_print('')  # New line after progress indicator
     
@@ -253,23 +260,46 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     log_and_print(f"FIT DIAGNOSTICS | Seed: {seed} | Iteration: {iteration}", log_file=outfile)
     log_and_print("="*60, log_file=outfile)
     
-    for d_idx, district in enumerate(districts):  
-        obs = observed_agg[district]['match_stats']
-        sim = agg['match_stats'][d_idx, :]
-        
+    metric_names = ["top3", "top5", "top10", "unmatched"]
+    for d_idx, district in enumerate(districts):
+        obs = np.array(observed_agg[district]['match_stats'], dtype=float)
+        sim = np.array(agg['match_stats'][d_idx, :], dtype=float)
+        valid_mask = np.isfinite(obs) & np.isfinite(sim)
+
         log_and_print(f"\nDistrict {district}:", log_file=outfile)
-        log_and_print(f"  Observed:  top3={obs[0]:5.1f}%, top5={obs[1]:5.1f}%, top10={obs[2]:5.1f}%, unmatched={obs[3]:5.1f}%", log_file=outfile)
-        log_and_print(f"  Simulated: top3={sim[0]:5.1f}%, top5={sim[1]:5.1f}%, top10={sim[2]:5.1f}%, unmatched={sim[3]:5.1f}%", log_file=outfile)
-        log_and_print(f"  Difference: top3={obs[0]-sim[0]:+5.1f}, top5={obs[1]-sim[1]:+5.1f}, top10={obs[2]-sim[2]:+5.1f}, unmatched={obs[3]-sim[3]:+5.1f}", log_file=outfile)
+        if not np.any(valid_mask):
+            log_and_print("  No valid observed/simulated pairs after NaN filtering.", log_file=outfile)
+            continue
+
+        obs_parts = [
+            f"{metric_names[i]}={obs[i]:5.1f}%" for i in range(len(metric_names)) if valid_mask[i]
+        ]
+        sim_parts = [
+            f"{metric_names[i]}={sim[i]:5.1f}%" for i in range(len(metric_names)) if valid_mask[i]
+        ]
+        diff_parts = [
+            f"{metric_names[i]}={obs[i]-sim[i]:+5.1f}" for i in range(len(metric_names)) if valid_mask[i]
+        ]
+
+        log_and_print(f"  Observed:  {', '.join(obs_parts)}", log_file=outfile)
+        log_and_print(f"  Simulated: {', '.join(sim_parts)}", log_file=outfile)
+        log_and_print(f"  Difference: {', '.join(diff_parts)}", log_file=outfile)
     
     log_and_print("Global School Utilization (Top 5 Mismatches):", log_file=outfile)
     util_diff = obs_util - sim_util
-    mismatch_indices = np.argsort(np.abs(util_diff))[::-1][:5]
-    for idx in mismatch_indices:
-        s_name = school_info_df.iloc[idx]["School DBN"]
-        log_and_print(f"  {s_name}: Obs={obs_util[idx]:5.1f}%, Sim={sim_util[idx]:5.1f}%, Diff={util_diff[idx]:+5.1f}%", log_file=outfile)
-    
-    log_and_print(f"  Mean Absolute Utilization Error: {np.mean(np.abs(util_diff)):.2f}%", log_file=outfile)
+    valid_indices = np.where(np.isfinite(util_diff) & util_valid_mask)[0]
+    if len(valid_indices) > 0:
+        sorted_valid = valid_indices[np.argsort(np.abs(util_diff[valid_indices]))[::-1]]
+        mismatch_indices = sorted_valid[:5]
+        for idx in mismatch_indices:
+            s_name = all_schools[idx]
+            log_and_print(f"  {s_name}: Obs={obs_util[idx]:5.1f}%, Sim={sim_util[idx]:5.1f}%, Diff={util_diff[idx]:+5.1f}%", log_file=outfile)
+        log_and_print(
+            f"  Mean Absolute Utilization Error: {np.mean(np.abs(util_diff[valid_indices])):.2f}%",
+            log_file=outfile,
+        )
+    else:
+        log_and_print("  No valid utilization differences after NaN filtering.", log_file=outfile)
     
     log_and_print("="*60 + "\n", log_file=outfile)
     # Now compute likelihood for each district separately
@@ -337,7 +367,8 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     return total_log_lik + util_penalty
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
-                            school_info_df, M=20, seed=42, iteration=1, outfile=None):
+                            school_info_df, M=20, seed=42, iteration=1,
+                            sampling_n_jobs=32, outfile=None):
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     
@@ -362,7 +393,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             objective_global_phi_k,
             bounds=(0.01, 0.99),
             method='bounded',
-            options={'xatol': 0.01, 'maxiter': 10}
+            options={'xatol': 0.01, 'maxiter': 5}
         )
         params['global_phis'][k] = result.x
 
@@ -374,7 +405,8 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     for sim in range(M):
         # Only vary the Mallows preference sampling, not the lottery
         np.random.seed(seed + sim)
-        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed)
+        log_and_print(f"      Running simulation {sim+1}/{M} for getting samples...", log_file=outfile)
+        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, sampling_n_jobs=sampling_n_jobs, outfile=outfile)
         
         if agg_accum is None:
             agg_accum = {k: v.copy() for k, v in agg_sim.items()}

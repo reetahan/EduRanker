@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=64            
 #SBATCH --mem=8GB                     
 #SBATCH --time=40:10:00             
-#SBATCH --account=torch_pr_594_general
+#SBATCH --account=torch_pr_594_tandon_priority
 #SBATCH --output=/scratch/rm6609/EduRanker/MatchingInferenceEngine/experiment-results/mass-sim-logs/job_%A_%a.log
 #SBATCH --mail-user=rm6609@nyu.edu
 #SBATCH --mail-type=BEGIN,END,FAIL

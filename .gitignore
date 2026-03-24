@@ -10,3 +10,10 @@
 *.xlsx
 *.env
 *.pyc
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Renviron
+.Rproj
+outputs/

@@ -2,75 +2,100 @@ import pandas as pd
 import numpy as np
 from scipy.optimize import minimize_scalar
 import copy
+from concurrent.futures import ProcessPoolExecutor
 from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates
-from mallows import sample_students_global_mixture
+from mallows import  _sample_students_chunk
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
                          lottery_global, k_ranking_length=10, outfile=None,
-                         sampling_n_jobs=32, sampling_chunk_size=1000,
-                         sampling_log_progress=False, sampling_progress_every=5000):
-    """
-    Run one simulation with GLOBAL MIXTURE parameters.
-    Updated to support parallelized Mallows sampling.
-    """
+                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None):
+    
+    
     all_rankings = []
     all_district_assignments = []
     districts = list(params['districts'].keys())
+    
+    # Collect all chunks across all districts
+    all_chunks = []  # (district, schools_list, sigma_indices, chunk_components, seed)
+    rng = np.random.default_rng()
     
     for district in districts:
         n_students = int(match_stats_df[
             match_stats_df['Residential District'] == district
         ]['Total Applicants'].iloc[0])
         
-        log_and_print(f"Handling district {district} with {n_students} students", outfile)
-        
-        # Generate a unique seed for this district/simulation combo
-        district_seed = int(np.random.randint(0, 2**32 - 1))
-
-        # Call your new parallelized function
-        rankings = sample_students_global_mixture(
-            params=params,
-            district=district,
-            n_students=n_students,
-            n_jobs=sampling_n_jobs,
-            chunk_size=sampling_chunk_size,
-            random_seed=district_seed,
-            log_progress=sampling_log_progress,
-            progress_every=sampling_progress_every,
-            log_file=outfile,
-        )
-        
-        # Truncate to desired ranking length (top 10)
-        rankings = [ranking[:k_ranking_length] for ranking in rankings]
-
-        # Convert indices back to School DBN strings for Gale-Shapley
+        sigma_d = params['districts'][district]['central_ranking']
         schools_list = params['districts'][district]['schools']
-        rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
+        school_to_idx = {s: i for i, s in enumerate(schools_list)}
+        sigma_indices = np.array([school_to_idx[s] for s in sigma_d])
         
-        all_rankings.extend(rankings_as_schools)
+        component_indices = rng.choice(len(params['global_phis']),
+                                       size=n_students, p=params['global_weights'])
+        
+        for start in range(0, n_students, sampling_chunk_size):
+            chunk = component_indices[start:start + sampling_chunk_size]
+            all_chunks.append((district, schools_list, sigma_indices, chunk, rng.integers(2**32)))
+        
         all_district_assignments.extend([district] * n_students)
     
-    # --- Standard Gale-Shapley Logic ---
+    # ONE pool for all districts
+    results_by_district = {d: [] for d in districts}
+    
+    if sampling_n_jobs > 1 and executor is not None:
+        futures = []
+        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+            future = executor.submit(
+                _sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed
+            )
+            futures.append((district, future))
+        
+        for district, future in futures:
+            results_by_district[district].extend(future.result())
+    elif sampling_n_jobs > 1:
+        with ProcessPoolExecutor(max_workers=sampling_n_jobs) as pool:
+            futures = []
+            for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+                future = pool.submit(
+                    _sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed
+                )
+                futures.append((district, future))
+            
+            for district, future in futures:
+                results_by_district[district].extend(future.result())
+    else:
+        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+            results_by_district[district].extend(
+                _sample_students_chunk(sigma_indices, params['global_phis'], chunk, seed)
+            )
+    
+    # Convert to school DBNs and truncate
+    for district in districts:
+        schools_list = params['districts'][district]['schools']
+        rankings = results_by_district[district]
+        rankings = [r[:k_ranking_length] for r in rankings]
+        rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
+        all_rankings.extend(rankings_as_schools)
+    
+    log_and_print(f"    Generated {len(all_rankings)} student rankings across {len(districts)} districts ({len(all_chunks)} chunks)", log_file=outfile)
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
-    
     rankings_as_indices = [np.array([school_to_idx[s] for s in r]) for r in all_rankings]
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     
     matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
-
-    agg = compute_aggregates(all_rankings, matches_schools, 
+    
+    agg = compute_aggregates(all_rankings, matches_schools,
                             np.array(all_district_assignments), all_schools)
     return agg
 
 
-
 def EM_algorithm(df, match_stats_df, school_info_df,
-                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42, outfile=None):
+                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42, outfile=None, 
+                 sampling_n_jobs=32):
     """
     EM algorithm with GLOBAL MIXTURE
     """
@@ -99,6 +124,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     
     log_likelihoods = []
     
+    warm_executor = ProcessPoolExecutor(max_workers=sampling_n_jobs)
     # EM loop
     for iteration in range(max_iter):
         log_and_print(f"\n{'='*60}", log_file=outfile)
@@ -111,7 +137,8 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         params, final_agg = optimize_global_mixture(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration, outfile=outfile, sampling_n_jobs=32
+            iteration=iteration, outfile=outfile, sampling_n_jobs=sampling_n_jobs,
+            executor=warm_executor, max_iter_em=max_iter
         )
 
         # Sort them to remove indexing ambiguity
@@ -120,14 +147,19 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         params['global_weights'] = params['global_weights'][sorted_indices]
 
         # M-STEP: Nudge sigmas using the result of the simulation above
-        params = nudge_district_sigmas(params, final_agg, school_info_df)
+        params = nudge_district_sigmas(
+            params,
+            final_agg,
+            school_info_df,
+            all_schools=df['School DBN'].unique(),
+        )
         
         # Compute total log-likelihood
         log_and_print("\n  Computing final log-likelihood at optimized parameters...", log_file=outfile)
         total_log_lik = compute_log_likelihood_gaussian_all_districts(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration, outfile=outfile
+            iteration=iteration, outfile=outfile, executor=warm_executor
         )
         
         log_likelihoods.append(total_log_lik)
@@ -151,6 +183,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             log_and_print(f"{'='*60}", log_file=outfile)
             break
     
+    warm_executor.shutdown()
     log_and_print(f"\nFinal global parameters:", log_file=outfile)
     log_and_print(f"  Global phis: {params['global_phis']}", log_file=outfile)
     log_and_print(f"  Global weights: {params['global_weights']}", log_file=outfile)
@@ -192,7 +225,8 @@ def initialize_parameters_global_mixture(districts, df, K=1):
 
 def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
                                                    df, match_stats_df, school_info_df,
-                                                   M=1, seed=42, iteration=1, outfile=None):
+                                                   M=1, seed=42, iteration=1, outfile=None, 
+                                                   executor=None, sampling_n_jobs=32):
     """
     Compute log-likelihood for ALL districts at once
     
@@ -227,7 +261,8 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         # Simulate ALL districts together (do this ONCE per M iteration)
         agg = run_single_simulation(
             params_global, df, match_stats_df, school_info_df, 
-            lottery_fixed, outfile=outfile
+            lottery_fixed, outfile=outfile, executor=executor,
+            sampling_n_jobs=sampling_n_jobs
         )
 
         total_filled += agg['filled']
@@ -368,22 +403,28 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20, seed=42, iteration=1,
-                            sampling_n_jobs=32, outfile=None):
+                            sampling_n_jobs=32, outfile=None, executor=None, max_iter_em=5):
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
-    
+    eval_count = [0]
+
     for k in range(K):
         phi_k_initial = params['global_phis'][k]
+        log_and_print(f"\n  [EM iter {iteration+1}/{max_iter_em}] Optimizing phi[{k+1}/{K}], starting at {phi_k_initial:.4f}", log_file=outfile)
+
         
         def objective_global_phi_k(phi):
             nonlocal best_agg_stats
+            eval_count[0] += 1
+            log_and_print(f"    [EM iter {iteration+1}/{max_iter_em}] phi[{k+1}/{K}] eval #{eval_count[0]}, trying phi={phi:.4f}", log_file=outfile)
             original_phi = params['global_phis'][k]
             params['global_phis'][k] = phi
             
            
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
-                school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile
+                school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile, 
+                executor=executor, sampling_n_jobs=sampling_n_jobs
             )
             
             params['global_phis'][k] = original_phi
@@ -396,6 +437,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             options={'xatol': 0.01, 'maxiter': 5}
         )
         params['global_phis'][k] = result.x
+        log_and_print(f"  [EM iter {iteration+1}/{max_iter_em}] phi[{k+1}/{K}] -> {result.x:.4f} (took {eval_count[0]} evals)", log_file=outfile)
 
     # Average M simulations to get robust aggregate for the nudge
     n_students_total = int(match_stats_df['Total Applicants'].sum())
@@ -405,8 +447,9 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     for sim in range(M):
         # Only vary the Mallows preference sampling, not the lottery
         np.random.seed(seed + sim)
-        log_and_print(f"      Running simulation {sim+1}/{M} for getting samples...", log_file=outfile)
-        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, sampling_n_jobs=sampling_n_jobs, outfile=outfile)
+        log_and_print(f"  [EM iter {iteration+1}/{max_iter_em}] Final averaging sim {sim+1}/{M}...", log_file=outfile)
+        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, 
+                                        sampling_n_jobs=sampling_n_jobs, outfile=outfile, executor=executor)
         
         if agg_accum is None:
             agg_accum = {k: v.copy() for k, v in agg_sim.items()}
@@ -419,8 +462,11 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     return params, final_agg
 
-def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1):
-    sim_filled = pd.Series(final_agg['filled'], index=params['districts'][next(iter(params['districts']))]['schools']) # or your master schools list
+def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1, all_schools=None):
+    if all_schools is None:
+        all_schools = school_info_df['School DBN'].values
+
+    sim_filled = pd.Series(final_agg['filled'], index=all_schools)
     real_util_counts = (school_info_df.set_index('School DBN')['Utilization'] / 100) * school_info_df.set_index('School DBN')['Capacity']
     
     util_error = real_util_counts - sim_filled
@@ -431,7 +477,7 @@ def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1):
                                    for i, s in enumerate(d_data['central_ranking'])}
         
         for s_dbn, error in util_error.items():
-            if s_dbn in d_data['pop_scores']:
+            if s_dbn in d_data['pop_scores'] and np.isfinite(error):
                 d_data['pop_scores'][s_dbn] += eta * error 
         
         new_sigma = sorted(d_data['pop_scores'].items(), key=lambda x: x[1], reverse=True)

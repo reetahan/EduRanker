@@ -6,7 +6,7 @@ from data_ingestion import read_data, preprocess_data
 from analysis import log_and_print
 from config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
 
-def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=32, max_iter_opt=5):
+def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=32, max_iter_opt=5, seed=40):
     if df_filepath is None:
         df_filepath = f"{POLISHED_DATA_DIR}/master_data_03_residential_district.xlsx"
     df = read_data(df_filepath)
@@ -29,12 +29,11 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=3
         K=K,
         outfile=outfile,
         sampling_n_jobs=sampling_n_jobs,
-        max_iter_opt=max_iter_opt
+        max_iter_opt=max_iter_opt,
+        seed=seed
     )
-    log_and_print(f"===== FINAL RESULTS =====", outfile)
-    log_and_print(params, log_file=outfile)
-    log_and_print(final_agg, log_file=outfile)
-    log_and_print(log_likelihoods, log_file=outfile)
+    log_and_print(f"===== RUN COMPLETE =====", log_file=outfile)
+    log_and_print(f"Log-likelihood trajectory: {log_likelihoods}", log_file=outfile)
 
 
 if __name__ == "__main__":
@@ -54,4 +53,4 @@ if __name__ == "__main__":
     df_filename = os.path.splitext(os.path.basename(args.df_filepath))[0] if args.df_filepath else "default"
     outfile = f'{EXP_OUT_FOLDER}real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_opt={args.max_iter_opt}_{df_filename}_{timestamp}.txt'
     run_real(outfile=outfile, df_filepath=args.df_filepath, max_iter=args.max_iter, 
-             M=args.M, K=args.K, sampling_n_jobs=args.n_jobs, max_iter_opt=args.max_iter_opt)
+             M=args.M, K=args.K, sampling_n_jobs=args.n_jobs, max_iter_opt=args.max_iter_opt, seed=args.seed)

@@ -94,7 +94,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
 
 
 def EM_algorithm(df, match_stats_df, school_info_df,
-                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42, outfile=None, 
+                 max_iter=10, tol=0.01, K=1, M_simulations=20, seed=40, outfile=None, 
                  sampling_n_jobs=32, max_iter_opt=5):
     """
     EM algorithm with GLOBAL MIXTURE
@@ -124,6 +124,9 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     observed_agg = extract_observed_aggregates(df, match_stats_df)
     
     log_likelihoods = []
+    best_params = None
+    best_log_like = -np.inf
+    best_agg = None
     
     warm_executor = ProcessPoolExecutor(max_workers=sampling_n_jobs)
     # EM loop
@@ -153,10 +156,16 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             final_agg,
             school_info_df,
             all_schools=df['School DBN'].unique(),
+            outfile=outfile
         )
         
         log_likelihoods.append(total_log_like)
         log_and_print(f"\nTotal log-likelihood: {total_log_like:.2f}", log_file=outfile)
+        if total_log_like > best_log_like:
+            best_log_like = total_log_like
+            best_params = copy.deepcopy(params)
+            best_agg = copy.deepcopy(final_agg)
+            log_and_print(f"  New best log-likelihood! - {best_log_like:.2f}", log_file=outfile)
         
         # Check convergence
         max_phi_change = max(
@@ -178,10 +187,14 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     
     warm_executor.shutdown()
     log_and_print(f"\nFinal global parameters:", log_file=outfile)
-    log_and_print(f"  Global phis: {params['global_phis']}", log_file=outfile)
-    log_and_print(f"  Global weights: {params['global_weights']}", log_file=outfile)
+    log_and_print(f"  Global phis: {best_params['global_phis']}", log_file=outfile)
+    log_and_print(f"  Global weights: {best_params['global_weights']}", log_file=outfile)
+    log_and_print(f"\nEstimated central rankings (sigma) per district:", log_file=outfile)
+    for district in sorted(best_params['districts'].keys()):
+        sigma = best_params['districts'][district]['central_ranking']
+        log_and_print(f"\n  District {district}: {sigma}", log_file=outfile)
     
-    return params, lottery_global, log_likelihoods, final_agg
+    return best_params, lottery_global, log_likelihoods, best_agg
 
 def initialize_parameters_global_mixture(districts, df, K=1):
     """
@@ -458,7 +471,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     return params, final_agg, last_log_like[0]
 
-def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1, all_schools=None):
+def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1, all_schools=None, outfile=None):
     if all_schools is None:
         all_schools = school_info_df['School DBN'].values
 
@@ -476,7 +489,11 @@ def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1, all_school
             if s_dbn in d_data['pop_scores'] and np.isfinite(error):
                 d_data['pop_scores'][s_dbn] += eta * error 
         
+        old_top3 = d_data['central_ranking'][:3] if 'central_ranking' in d_data else []
         new_sigma = sorted(d_data['pop_scores'].items(), key=lambda x: x[1], reverse=True)
         d_data['central_ranking'] = [s[0] for s in new_sigma]
+        new_top3 = d_data['central_ranking'][:3]
+        if old_top3 != new_top3:
+            log_and_print(f"    District {d_id} sigma changed: {old_top3} -> {new_top3}", log_file=outfile)
         
     return params

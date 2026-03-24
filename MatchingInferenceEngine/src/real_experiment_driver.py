@@ -6,7 +6,7 @@ from data_ingestion import read_data, preprocess_data
 from analysis import log_and_print
 from config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
 
-def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=32):
+def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=32, max_iter_opt=5):
     if df_filepath is None:
         df_filepath = f"{POLISHED_DATA_DIR}/master_data_03_residential_district.xlsx"
     df = read_data(df_filepath)
@@ -28,7 +28,8 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12, sampling_n_jobs=3
         M_simulations=M,
         K=K,
         outfile=outfile,
-        sampling_n_jobs=sampling_n_jobs
+        sampling_n_jobs=sampling_n_jobs,
+        max_iter_opt=max_iter_opt
     )
     log_and_print(f"===== FINAL RESULTS =====", outfile)
     log_and_print(params, log_file=outfile)
@@ -40,9 +41,10 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--df-filepath', type=str, default=None, help='Filepath to input dataframe (xlsx file)')
-    parser.add_argument('--K', type=int, default=4, help='Number of mixture components for real data')
-    parser.add_argument('--M', type=int, default=4, help='Number of simulations per evaluation')
-    parser.add_argument('--max_iter', type=int, default=4, help='Maximum EM iterations')
+    parser.add_argument('--K', type=int, default=5, help='Number of mixture components for real data')
+    parser.add_argument('--M', type=int, default=5, help='Number of simulations per evaluation')
+    parser.add_argument('--max_iter', type=int, default=5, help='Maximum EM iterations')
+    parser.add_argument('--max_iter_opt', type=int, default=5, help='Maximum Optimizer iterations')
     parser.add_argument('--seed', type=int, default=40, help='Random seed for synthetic experiments')
     parser.add_argument('--final-analysis', action='store_true', help='Run final aggregation and plotting step')
     parser.add_argument('--n_jobs', type=int, default=64, help='Number of parallel workers')
@@ -50,5 +52,6 @@ if __name__ == "__main__":
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     df_filename = os.path.splitext(os.path.basename(args.df_filepath))[0] if args.df_filepath else "default"
-    outfile = f'{EXP_OUT_FOLDER}real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_{df_filename}_{timestamp}.txt'
-    run_real(outfile=outfile, df_filepath=args.df_filepath, max_iter=args.max_iter, M=args.M, K=args.K, sampling_n_jobs=args.n_jobs)
+    outfile = f'{EXP_OUT_FOLDER}real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_opt={args.max_iter_opt}_{df_filename}_{timestamp}.txt'
+    run_real(outfile=outfile, df_filepath=args.df_filepath, max_iter=args.max_iter, 
+             M=args.M, K=args.K, sampling_n_jobs=args.n_jobs, max_iter_opt=args.max_iter_opt)

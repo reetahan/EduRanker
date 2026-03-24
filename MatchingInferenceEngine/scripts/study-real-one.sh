@@ -11,6 +11,11 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 
 SEED=40
+K=4
+M=4
+MAX_ITER=4
+MAX_ITER_OPT=4
+N_JOBS=64
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 
 
@@ -25,7 +30,7 @@ singularity exec --fakeroot --overlay "$OVERLAY:ro" \
 /bin/bash -c "
     source /ext3/env.sh
     cd /scratch/rm6609/EduRanker/MatchingInferenceEngine
-    python3 src/real_experiment_driver.py --seed $SEED
+    python3 src/real_experiment_driver.py --seed $SEED --K $K --M $M --max_iter $MAX_ITER --max_iter_opt $MAX_ITER_OPT --n_jobs $N_JOBS
 "
 
 echo "Job End: $(date '+%Y-%m-%d_%H-%M-%S')"

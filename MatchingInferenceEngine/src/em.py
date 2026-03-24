@@ -95,7 +95,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
 
 def EM_algorithm(df, match_stats_df, school_info_df,
                  max_iter=10, tol=0.01, K=1, M_simulations=20, seed=42, outfile=None, 
-                 sampling_n_jobs=32):
+                 sampling_n_jobs=32, max_iter_opt=5):
     """
     EM algorithm with GLOBAL MIXTURE
     """
@@ -114,7 +114,8 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     log_and_print(f"  Districts: {len(districts)}", log_file=outfile)
     log_and_print(f"  Total students: {n_total_students}", log_file=outfile)
     log_and_print(f"  Global mixture components: K={K}", log_file=outfile)
-    log_and_print(f"  Max iterations: {max_iter}", log_file=outfile)
+    log_and_print(f"  Max iterations of EM Algorithm: {max_iter}", log_file=outfile)
+    log_and_print(f"  Max iterations of nonconvex optimizer: {max_iter_opt}", log_file=outfile)
     log_and_print(f"  Simulations per evaluation: M={M_simulations}\n", log_file=outfile)
     
     # Initialize with GLOBAL mixture
@@ -134,11 +135,11 @@ def EM_algorithm(df, match_stats_df, school_info_df,
         old_params = copy.deepcopy(params)
         
         # M-STEP: Optimize global parameters
-        params, final_agg = optimize_global_mixture(
+        params, final_agg, total_log_like = optimize_global_mixture(
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
             iteration=iteration, outfile=outfile, sampling_n_jobs=sampling_n_jobs,
-            executor=warm_executor, max_iter_em=max_iter
+            executor=warm_executor, max_iter_em=max_iter, max_iter_opt=max_iter_opt
         )
 
         # Sort them to remove indexing ambiguity
@@ -154,16 +155,8 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             all_schools=df['School DBN'].unique(),
         )
         
-        # Compute total log-likelihood
-        log_and_print("\n  Computing final log-likelihood at optimized parameters...", log_file=outfile)
-        total_log_lik = compute_log_likelihood_gaussian_all_districts(
-            params, observed_agg, df, match_stats_df, 
-            school_info_df, M=M_simulations, seed=seed,
-            iteration=iteration, outfile=outfile, executor=warm_executor
-        )
-        
-        log_likelihoods.append(total_log_lik)
-        log_and_print(f"\nTotal log-likelihood: {total_log_lik:.2f}", log_file=outfile)
+        log_likelihoods.append(total_log_like)
+        log_and_print(f"\nTotal log-likelihood: {total_log_like:.2f}", log_file=outfile)
         
         # Check convergence
         max_phi_change = max(
@@ -403,10 +396,12 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20, seed=42, iteration=1,
-                            sampling_n_jobs=32, outfile=None, executor=None, max_iter_em=5):
+                            sampling_n_jobs=32, outfile=None, executor=None, 
+                            max_iter_em=5, max_iter_opt=5):
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     eval_count = [0]
+    last_log_like = [None]
 
     for k in range(K):
         phi_k_initial = params['global_phis'][k]
@@ -426,6 +421,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
                 school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile, 
                 executor=executor, sampling_n_jobs=sampling_n_jobs
             )
+            last_log_like[0] = total_log_lik
             
             params['global_phis'][k] = original_phi
             return -total_log_lik
@@ -434,7 +430,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             objective_global_phi_k,
             bounds=(0.01, 0.99),
             method='bounded',
-            options={'xatol': 0.01, 'maxiter': 5}
+            options={'xatol': 0.01, 'maxiter': max_iter_opt}
         )
         params['global_phis'][k] = result.x
         log_and_print(f"  [EM iter {iteration+1}/{max_iter_em}] phi[{k+1}/{K}] -> {result.x:.4f} (took {eval_count[0]} evals)", log_file=outfile)
@@ -460,7 +456,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     # Average the accumulated results
     final_agg = {k: v / M for k, v in agg_accum.items()}
     
-    return params, final_agg
+    return params, final_agg, last_log_like[0]
 
 def nudge_district_sigmas(params, final_agg, school_info_df, eta=0.1, all_schools=None):
     if all_schools is None:

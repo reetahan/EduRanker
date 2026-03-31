@@ -2,7 +2,7 @@
 
 #SBATCH --job-name=eduranker_main_real                             
 #SBATCH --nodes=1                    
-#SBATCH --cpus-per-task=64            
+#SBATCH --cpus-per-task=64           
 #SBATCH --mem=8GB                     
 #SBATCH --time=40:10:00             
 #SBATCH --account=torch_pr_594_tandon_priority
@@ -11,10 +11,10 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 
 SEED=40
-K=4
-M=4
-MAX_ITER=4
-MAX_ITER_OPT=4
+K=6
+M=10
+MAX_ITER=10
+MAX_ITER_OPT=10
 N_JOBS=64
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 

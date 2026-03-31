@@ -25,6 +25,12 @@ def mallows_insertion_sampling(central_ranking, phi, rng=None, position_prob_cac
     
     return np.array(ranking)
 
+def compute_sigma_cutoff(phi, k_ranking_length=10, min_prob=1e-5):
+    if phi >= 0.99:
+        return None
+    cutoff = int(np.ceil(1 + np.log(min_prob / (1 - phi)) / np.log(phi)))
+    return max(cutoff, k_ranking_length)
+
 def _build_position_prob_cache(max_positions, phi):
     cache = {1: np.array([1.0])}
     for positions in range(2, max_positions + 1):

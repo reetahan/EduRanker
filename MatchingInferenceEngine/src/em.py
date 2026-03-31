@@ -405,6 +405,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         
         total_log_lik += log_lik
     
+    log_and_print(f"  Match stats log-likelihood: {total_log_lik:.2f}, Util penalty: {util_penalty:.2f}, Combined: {total_log_lik + util_penalty:.2f}", log_file=outfile)
     return total_log_lik + util_penalty
 
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 

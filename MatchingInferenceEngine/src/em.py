@@ -5,12 +5,13 @@ import copy
 from concurrent.futures import ProcessPoolExecutor
 from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
-from gale_shapley import gale_shapley, compute_aggregates
+from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school
 from mallows import  _sample_students_chunk
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global, k_ranking_length=10, outfile=None,
-                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None):
+                         lottery_global=None, k_ranking_length=10, outfile=None,
+                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None,
+                         per_school_lottery=False):
     
     
     all_rankings = []
@@ -19,7 +20,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     
     # Collect all chunks across all districts
     all_chunks = []  # (district, schools_list, sigma_indices, chunk_components, seed)
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=np.random.randint(0, 2**32))
     
     for district in districts:
         n_students = int(match_stats_df[
@@ -85,7 +86,13 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     
-    matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
+    if per_school_lottery:
+        n_students = len(rankings_as_indices)
+        n_schools = len(all_schools)
+        school_lotteries = rng.random((n_schools, n_students))
+        matches_idx = gale_shapley_per_school(rankings_as_indices, school_lotteries, capacities)
+    else:
+        matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
     
     agg = compute_aggregates(all_rankings, matches_schools,

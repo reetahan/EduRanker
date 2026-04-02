@@ -10,10 +10,11 @@ import os
 import re
 import argparse
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 from typing import Optional
-
+import pandas as pd
+from scipy.stats import kendalltau
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -213,7 +214,7 @@ def _parse_fit_diagnostics_block(block_lines):
 def find_and_parse_logs(results_dir, min_date='20260324'):
     results = []
     for fname in sorted(os.listdir(results_dir)):
-        if not fname.endswith('.txt') or not fname.startswith('real_experiment'):
+        if not fname.endswith('.txt') or not (fname.startswith('real_experiment') or fname.startswith('chilean_experiment')):
             continue
         _, _, _, _, _, date_str = parse_filename(fname)
         if date_str is None or date_str < min_date:
@@ -745,26 +746,156 @@ def _plot_central_ranking_comparison(by_params, plots_dir, top_n=10):
         plt.close()
         print(f"  Saved sigma_detail_{tag}.png")
 
+def compare_synthetic_to_real_rankings(syn_csv_path, indv_df_path, plots_dir=None, report_path=None):
+    """
+    Compare synthetic rankings (from best EM run) to real individual-level rankings.
+    
+    Args:
+        syn_csv_path: Path to synthetic rankings CSV (student_id, district, choice_1..choice_10)
+        indv_df_path: Path to individual-level preferences Excel file
+        plots_dir: Optional directory to save comparison plots
+        report_path: Optional path to write comparison report
+    """
+    
+    syn_df = pd.read_csv(syn_csv_path, dtype=str)
+    indv_df = pd.read_excel(indv_df_path)
+    indv_df['rbd'] = indv_df['rbd'].astype(str)
+    indv_df['Region'] = indv_df['Region'].astype(str)
+    
 
-# ============================================================
-# Main
-# ============================================================
+    regions = sorted(syn_df['district'].unique())
+    
+    lines = []
+    w = lines.append
+    w("=" * 90)
+    w("RANKING COMPARISON: Synthetic vs Real")
+    w("=" * 90)
+    
+    all_overlaps = []
+    all_taus = []
+    
+    for region in regions:
+        real_region = indv_df[indv_df['Region'] == region]
+        real_top1 = Counter(real_region[real_region['preference_number'] == 1]['rbd'].astype(str))
+        real_any = Counter(real_region['rbd'].astype(str))
+        
+        syn_region = syn_df[syn_df['district'] == region]
+        syn_top1 = Counter(syn_region['choice_1'].dropna())
+        syn_any = Counter()
+        for col in [f'choice_{i}' for i in range(1, 11)]:
+            if col in syn_region.columns:
+                syn_any.update(syn_region[col].dropna())
+        
+        real_top10_schools = [s for s, _ in real_top1.most_common(10)]
+        syn_top10_schools = [s for s, _ in syn_top1.most_common(10)]
+        overlap = len(set(real_top10_schools) & set(syn_top10_schools))
+        all_overlaps.append(overlap)
+        
+        shared = set(real_any.keys()) & set(syn_any.keys())
+        tau = None
+        if len(shared) > 5:
+            real_rank = {s: i for i, (s, _) in enumerate(real_any.most_common())}
+            syn_rank = {s: i for i, (s, _) in enumerate(syn_any.most_common())}
+            shared_list = sorted(shared)
+            r = [real_rank[s] for s in shared_list]
+            s = [syn_rank[s] for s in shared_list]
+            tau, _ = kendalltau(r, s)
+            all_taus.append(tau)
+        
+        real_top1_set = set(real_top10_schools[:5])
+        syn_top1_set = set(syn_top10_schools[:5])
+        
+        tau_str = f"{tau:.3f}" if tau is not None else "N/A"
+        w(f"\n  {region}:")
+        w(f"    Top-10 first-choice overlap: {overlap}/10")
+        w(f"    Kendall tau (all shared schools): {tau_str}")
+        w(f"    Real top 5 (by #1 choice):  {real_top10_schools[:5]}")
+        w(f"    Synth top 5 (by #1 choice): {syn_top10_schools[:5]}")
+    
+    w(f"\n{'='*90}")
+    w(f"SUMMARY")
+    w(f"{'='*90}")
+    w(f"  Mean top-10 overlap: {np.mean(all_overlaps):.1f}/10")
+    w(f"  Median top-10 overlap: {np.median(all_overlaps):.0f}/10")
+    if all_taus:
+        w(f"  Mean Kendall tau: {np.mean(all_taus):.3f}")
+        w(f"  Median Kendall tau: {np.median(all_taus):.3f}")
+    
+    report_text = '\n'.join(lines)
+    print(report_text)
+    
+    if report_path:
+        with open(report_path, 'w') as f:
+            f.write(report_text)
+        print(f"\nComparison report written to {report_path}")
+    
+    if plots_dir:
+        os.makedirs(plots_dir, exist_ok=True)
+ 
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        
+        x = np.arange(len(regions))
+        ax1.bar(x, all_overlaps, color='#3498db', alpha=0.7)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([r[:15] for r in regions], fontsize=7, rotation=45, ha='right')
+        ax1.set_ylabel('Overlap (out of 10)')
+        ax1.set_title('Top-10 First-Choice School Overlap per Region')
+        ax1.axhline(np.mean(all_overlaps), color='red', linestyle='--', alpha=0.7, label=f'Mean={np.mean(all_overlaps):.1f}')
+        ax1.legend()
+        ax1.grid(True, alpha=0.2)
+        
+        if all_taus:
+            ax2.bar(x[:len(all_taus)], all_taus, color='#e67e22', alpha=0.7)
+            ax2.set_xticks(x[:len(all_taus)])
+            ax2.set_xticklabels([r[:15] for r in regions[:len(all_taus)]], fontsize=7, rotation=45, ha='right')
+            ax2.set_ylabel('Kendall Tau')
+            ax2.set_title('Rank Correlation (All Shared Schools)')
+            ax2.axhline(np.mean(all_taus), color='red', linestyle='--', alpha=0.7, label=f'Mean={np.mean(all_taus):.3f}')
+            ax2.axhline(0, color='black', linewidth=0.5)
+            ax2.legend()
+            ax2.grid(True, alpha=0.2)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(plots_dir, 'ranking_comparison.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Saved ranking_comparison.png")
+    
+    return all_overlaps, all_taus
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse EduRanker experiment logs and generate reports')
     parser.add_argument('--results-dir', type=str, required=True, help='Path to experiment-results directory')
-    parser.add_argument('--min-date', type=str, default='20260324', help='Minimum date in YYYYMMDD format')
+    parser.add_argument('--min-date', type=str, default='20260401', help='Minimum date in YYYYMMDD format')
     parser.add_argument('--report-out', type=str, default=None, help='Path to write text report')
     parser.add_argument('--plots-dir', type=str, default=None, help='Directory to save plots')
+    parser.add_argument('--compare-rankings', action='store_true', help='Compare synthetic vs real rankings')
+    parser.add_argument('--real-indv', type=str, default=None, help='Path to individual-level preferences Excel (for ranking comparison)')
     args = parser.parse_args()
 
-    results = find_and_parse_logs(args.results_dir, min_date=args.min_date)
-    if not results:
-        print("No completed experiments found.")
-        exit(0)
-
-    generate_report(results, out_path=args.report_out)
-
-    if args.plots_dir:
-        print(f"\nGenerating plots...")
-        generate_plots(results, plots_dir=args.plots_dir)
+    if args.compare_rankings:
+        syn_csvs = sorted([f for f in os.listdir(args.results_dir) if f.endswith('_synthetic_rankings.csv')])
+        if not syn_csvs:
+            print("Error: no synthetic rankings CSV found in results directory")
+            exit(1)
+        if not args.real_indv:
+            print("Error: --real-indv required for ranking comparison")
+            exit(1)
+        syn_csv = os.path.join(args.results_dir, syn_csvs[-1])
+        
+        print(f"Comparing: {syn_csv}")
+        print(f"Against:   {args.real_indv}")
+        compare_synthetic_to_real_rankings(
+            syn_csv, args.real_indv,
+            plots_dir=args.plots_dir,
+            report_path=args.report_out
+        )
+    else:
+        results = find_and_parse_logs(args.results_dir, min_date=args.min_date)
+        if not results:
+            print("No completed experiments found.")
+            exit(0)
+        generate_report(results, out_path=args.report_out)
+        if args.plots_dir:
+            print(f"\nGenerating plots...")
+            generate_plots(results, plots_dir=args.plots_dir)

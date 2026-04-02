@@ -1,9 +1,63 @@
 import numpy as np
+from numba import njit
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from analysis import log_and_print
 
-def mallows_insertion_sampling(central_ranking, phi, rng=None, position_prob_cache=None):
+def _build_numba_prob_cache(max_positions, phi):
+    """
+    Builds a 2D array for fast C-level CDF lookups.
+    """
+    cum_cache_2d = np.ones((max_positions, max_positions), dtype=np.float64)
+    for i in range(max_positions):
+        num_positions = i + 1
+        probs = np.array([phi ** (num_positions - 1 - j) for j in range(num_positions)])
+        cum_cache_2d[i, :num_positions] = np.cumsum(probs / probs.sum())
+    return cum_cache_2d
+
+@njit
+def _mallows_top_k_numba(central_ranking, u_draws, cum_cache_2d, k):
+    """Build only the top-k of a Mallows permutation."""
+    n = len(central_ranking)
+    if n == 0:
+        return np.empty(0, dtype=central_ranking.dtype)
+    if k > n:
+        k = n
+    
+    top = np.empty(k, dtype=central_ranking.dtype)
+    size = 0
+    
+    for i in range(n):
+        num_positions = i + 1
+        cdf = cum_cache_2d[i, :num_positions]
+        pos = np.searchsorted(cdf, u_draws[i])
+        
+        if pos >= k:
+            continue
+        
+        if size < k:
+            # Shift right to make room
+            for j in range(size, pos, -1):
+                top[j] = top[j - 1]
+            top[pos] = central_ranking[i]
+            size += 1
+        else:
+            # Full: shift right, drop last
+            for j in range(k - 1, pos, -1):
+                top[j] = top[j - 1]
+            top[pos] = central_ranking[i]
+    
+    return top[:size]
+
+def mallows_insertion_sampling(central_ranking, phi, rng=None, cum_cache_2d=None, k_ranking_length=10):
+    n = len(central_ranking)
+    chooser = rng if rng is not None else np.random
+    u_draws = chooser.random(n)
+    if cum_cache_2d is None:
+        cum_cache_2d = _build_numba_prob_cache(n, phi)
+    return _mallows_top_k_numba(np.array(central_ranking), u_draws, cum_cache_2d, k_ranking_length)
+
+def slow_mallows_insertion_sampling(central_ranking, phi, rng=None, position_prob_cache=None):
     n = len(central_ranking)
     ranking = []
     chooser = rng if rng is not None else np.random
@@ -33,15 +87,18 @@ def compute_sigma_cutoff(phi, k_ranking_length=10, min_prob=1e-5):
 
 def _build_position_prob_cache(max_positions, phi):
     cache = {1: np.array([1.0])}
+    cumcache = {1: np.array([1.0])}
     for positions in range(2, max_positions + 1):
         probs = np.array([phi ** (positions - 1 - j) for j in range(positions)])
-        cache[positions] = probs / probs.sum()
-    return cache
+        probs = probs / probs.sum()
+        cache[positions] = probs
+        cumcache[positions] = np.cumsum(probs)
+    return cache, cumcache
 
 
-def _sample_students_chunk(sigma_indices, phis, component_indices, seed):
+def _sample_students_chunk(sigma_indices, phis, component_indices, seed, k_ranking_length=10):
     rng = np.random.default_rng(seed)
-    prob_caches = {phi_idx: _build_position_prob_cache(len(sigma_indices), phis[phi_idx]) for phi_idx in range(len(phis))}
+    cum_caches = {phi_idx: _build_numba_prob_cache(len(sigma_indices), phis[phi_idx]) for phi_idx in range(len(phis))}
     rankings = []
     for k in component_indices:
         rankings.append(
@@ -49,7 +106,8 @@ def _sample_students_chunk(sigma_indices, phis, component_indices, seed):
                 sigma_indices,
                 phis[k],
                 rng=rng,
-                position_prob_cache=prob_caches[k],
+                cum_cache_2d=cum_caches[k],
+                k_ranking_length=k_ranking_length,
             )
         )
     return rankings
@@ -105,14 +163,14 @@ def sample_students_global_mixture(
             )
 
     if n_jobs <= 1 or n_students <= 1:
-        prob_caches = {phi_idx: _build_position_prob_cache(len(sigma_indices), phis[phi_idx]) for phi_idx in range(K)}
+        cum_caches = {phi_idx: _build_numba_prob_cache(len(sigma_indices), phis[phi_idx]) for phi_idx in range(K)}
         rankings = []
         for i, k in enumerate(component_indices, start=1):
             ranking = mallows_insertion_sampling(
                 sigma_indices,
                 phis[k],
                 rng=rng,
-                position_prob_cache=prob_caches[k],
+                cum_cache_2d=cum_caches[k],
             )
             rankings.append(ranking)
             maybe_log(i)

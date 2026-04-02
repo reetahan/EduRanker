@@ -88,3 +88,85 @@ def preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df):
     log_and_print(f"Average list length from data: {avg_list_length:.2f}")
      
     return df, match_stats_df, school_info_df
+
+def preprocess_chilean_data(indv_df, match_df, school_cap_reg_df, school_cap_df):
+
+    matched_rows = indv_df[indv_df['matched_first_round'] == 1][['mrun', 'rbd', 'preference_number']].copy()
+    matched_rows.rename(columns={'preference_number': 'match_rank', 'rbd': 'matched_rbd'}, inplace=True)
+
+    tot_reg = indv_df.groupby(['Region', 'rbd'])['mrun'].nunique().reset_index()
+    tot_reg.rename(columns={'mrun': 'Total Applicants by Residential District'}, inplace=True)
+    
+    merged = pd.merge(indv_df, matched_rows[['mrun', 'match_rank']], on='mrun', how='left')
+    merged['match_rank'] = merged['match_rank'].fillna(9999)
+    
+
+    true_df = merged[(merged['preference_number'] >= merged['match_rank']) | (merged['match_rank'] == 9999)]
+    true_reg = true_df.groupby(['Region', 'rbd'])['mrun'].nunique().reset_index()
+    true_reg.rename(columns={'mrun': 'True Applicants by Residential District'}, inplace=True)
+    
+    tot_sch = indv_df.groupby('rbd')['mrun'].nunique().reset_index()
+    tot_sch.rename(columns={'mrun': 'Total Applicants School'}, inplace=True)
+    
+    true_sch = true_df.groupby('rbd')['mrun'].nunique().reset_index()
+    true_sch.rename(columns={'mrun': 'Total True Applicants School'}, inplace=True)
+    
+    df = pd.merge(tot_reg, true_reg, on=['Region', 'rbd'], how='left').fillna(0)
+    df = pd.merge(df, tot_sch, on='rbd', how='left').fillna(0)
+    df = pd.merge(df, true_sch, on='rbd', how='left').fillna(0)
+    
+    df['School DBN'] = df['rbd'].astype(str)
+    df['School Name'] = "School_" + df['rbd'].astype(str) 
+    df['School District'] = df['Region'].astype(str)
+    df['Residential District'] = df['Region'].astype(str)
+    
+    df['Ratio'] = (df['True Applicants by Residential District'] ** 2) / df['Total Applicants by Residential District'].replace(0, 1)
+    df['Rank'] = df.groupby('Residential District')['Ratio'].rank(ascending=False, method='first')
+    
+    df = df[['School DBN', 'School Name', 'School District', 'Residential District', 
+             'Total Applicants by Residential District', 'True Applicants by Residential District',
+             'Total Applicants School', 'Total True Applicants School', 'Ratio', 'Rank']]
+    
+    for col in ['Total Applicants by Residential District', 'True Applicants by Residential District', 
+                'Total Applicants School', 'Total True Applicants School']:
+        df[col] = df[col].astype(int)
+
+    stats = []
+    for _, row in match_df.iterrows():
+        region = row['Region']
+        n_students = row['n_students']
+        
+        matched_fraction = (100 - row['pct_unmatched']) / 100
+        pct_top3 = sum(row[f'pct_top{i}'] for i in range(1, 4)) * matched_fraction
+        pct_top5 = sum(row[f'pct_top{i}'] for i in range(1, 6)) * matched_fraction
+        pct_top10 = sum(row[f'pct_top{i}'] for i in range(1, 11)) * matched_fraction
+        
+        stats.append({
+            'Residential District': str(region),
+            'Total Applicants': int(n_students),
+            '% Matches to Choice 1-3': pct_top3,
+            '% Matches to Choice 1-5': pct_top5,
+            '% Matches to Choice 1-10': pct_top10,
+            'Unmatched': row['pct_unmatched'],
+        })
+        
+    new_match_stats_df = pd.DataFrame(stats)
+    
+    school_caps = school_cap_df.groupby('rbd')['total_capacity'].sum().reset_index()
+    school_caps.rename(columns={'rbd': 'School DBN', 'total_capacity': 'Capacity'}, inplace=True)
+    school_caps['School DBN'] = school_caps['School DBN'].astype(str)
+   
+    admitted = school_cap_reg_df.groupby('rbd')['n_admitted'].sum().reset_index()
+    admitted.rename(columns={'rbd': 'School DBN', 'n_admitted': 'matched_count'}, inplace=True)
+    admitted['School DBN'] = admitted['School DBN'].astype(str)
+    
+    school_info_df = pd.merge(school_caps, admitted, on='School DBN', how='left')
+    school_info_df['matched_count'] = school_info_df['matched_count'].fillna(0)
+    school_info_df['Utilization'] = np.where(
+        school_info_df['Capacity'] > 0,
+        (school_info_df['matched_count'] / school_info_df['Capacity'] * 100).clip(upper=100),
+        0.0
+    )
+    school_info_df = school_info_df[['School DBN', 'Capacity', 'Utilization']]
+    
+    return df, new_match_stats_df, school_info_df

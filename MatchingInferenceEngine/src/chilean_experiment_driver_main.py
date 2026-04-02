@@ -1,7 +1,9 @@
 import argparse
 import os
+import numpy as np
+import pandas as pd
 from datetime import datetime
-from em import EM_algorithm
+from em import EM_algorithm, run_single_simulation
 from data_ingestion import read_data, preprocess_chilean_data
 from analysis import log_and_print
 from config import EXP_OUT_FOLDER, CHILEAN_DATA_DIR
@@ -33,6 +35,26 @@ def run_chilean_data_experiment(outfile, max_iter=5, M=5, K=12, sampling_n_jobs=
         seed=seed,
         per_school_lottery=True
     )
+
+    np.random.seed(seed)
+    agg, syn_rankings, syn_districts = run_single_simulation(
+        params, df, match_stats_df, school_info_df,
+        per_school_lottery=True, sampling_n_jobs=1,
+        return_rankings=True
+    )
+    
+    rows = []
+    for i, (ranking, district) in enumerate(zip(syn_rankings, syn_districts)):
+        row = {'student_id': i, 'district': district}
+        for j, school in enumerate(ranking[:10]):
+            row[f'choice_{j+1}'] = school
+        rows.append(row)
+    
+    syn_df = pd.DataFrame(rows)
+    syn_path = outfile.replace('.txt', '_synthetic_rankings.csv')
+    syn_df.to_csv(syn_path, index=False)
+    log_and_print(f"Saved synthetic rankings ({len(syn_df)} students) to {syn_path}", log_file=outfile)
+
     log_and_print(f"===== RUN COMPLETE =====", log_file=outfile)
     log_and_print(f"Log-likelihood trajectory: {log_likelihoods}", log_file=outfile)
 

@@ -7,85 +7,153 @@ from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school
 from mallows import  _sample_students_chunk
+from list_length import sample_truncated_normal_lengths
 
-def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global=None, k_ranking_length=10, outfile=None,
-                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None,
-                         per_school_lottery=False, return_rankings=False):
-    
-    
+def run_single_simulation(
+    params,
+    df,
+    match_stats_df,
+    school_info_df,
+    lottery_global=None,
+    k_ranking_length=10,
+    list_length_mode="fixed",   # "fixed" ou "gaussian"
+    list_length_mean=10,
+    list_length_std=2,
+    list_length_min=1,
+    list_length_max=12,
+    return_student_data=False,
+    outfile=None,
+    sampling_n_jobs=32,
+    sampling_chunk_size=2000,
+    executor=None,
+                         per_school_lottery=False, return_rankings=False
+):
     all_rankings = []
     all_district_assignments = []
+    all_list_lengths = []
+
     districts = list(params['districts'].keys())
-    
+
     # Collect all chunks across all districts
     all_chunks = []  # (district, schools_list, sigma_indices, chunk_components, seed)
     rng = np.random.default_rng(seed=np.random.randint(0, 2**32))
     
     for district in districts:
-        n_students = int(match_stats_df[
-            match_stats_df['Residential District'] == district
-        ]['Total Applicants'].iloc[0])
-        
+        n_students = int(
+            match_stats_df[
+                match_stats_df['Residential District'] == district
+            ]['Total Applicants'].iloc[0]
+        )
+
         sigma_d = params['districts'][district]['central_ranking']
         schools_list = params['districts'][district]['schools']
         school_to_idx = {s: i for i, s in enumerate(schools_list)}
         sigma_indices = np.array([school_to_idx[s] for s in sigma_d])
-        
-        component_indices = rng.choice(len(params['global_phis']),
-                                       size=n_students, p=params['global_weights'])
-        
+
+        component_indices = rng.choice(
+            len(params['global_phis']),
+            size=n_students,
+            p=params['global_weights']
+        )
+
         for start in range(0, n_students, sampling_chunk_size):
             chunk = component_indices[start:start + sampling_chunk_size]
-            all_chunks.append((district, schools_list, sigma_indices, chunk, rng.integers(2**32)))
-        
+            all_chunks.append(
+                (district, schools_list, sigma_indices, chunk, rng.integers(2**32))
+            )
+
         all_district_assignments.extend([district] * n_students)
-    
+
     # ONE pool for all districts
     results_by_district = {d: [] for d in districts}
-    
+
     if sampling_n_jobs > 1 and executor is not None:
         futures = []
         for district, schools_list, sigma_indices, chunk, seed in all_chunks:
             future = executor.submit(
-                _sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed
+                _sample_students_chunk,
+                sigma_indices,
+                params['global_phis'],
+                chunk,
+                seed
             )
             futures.append((district, future))
-        
+
         for district, future in futures:
             results_by_district[district].extend(future.result())
+
     elif sampling_n_jobs > 1:
         with ProcessPoolExecutor(max_workers=sampling_n_jobs) as pool:
             futures = []
             for district, schools_list, sigma_indices, chunk, seed in all_chunks:
                 future = pool.submit(
-                    _sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed
+                    _sample_students_chunk,
+                    sigma_indices,
+                    params['global_phis'],
+                    chunk,
+                    seed
                 )
                 futures.append((district, future))
-            
+
             for district, future in futures:
                 results_by_district[district].extend(future.result())
+
     else:
         for district, schools_list, sigma_indices, chunk, seed in all_chunks:
             results_by_district[district].extend(
-                _sample_students_chunk(sigma_indices, params['global_phis'], chunk, seed)
+                _sample_students_chunk(
+                    sigma_indices,
+                    params['global_phis'],
+                    chunk,
+                    seed
+                )
             )
-    
+
     # Convert to school DBNs and truncate
     for district in districts:
         schools_list = params['districts'][district]['schools']
         rankings = results_by_district[district]
-        rankings = [r[:k_ranking_length] for r in rankings]
-        rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
+        n_students_d = len(rankings)
+
+        if list_length_mode == "fixed":
+            max_len_here = min(k_ranking_length, len(schools_list))
+            list_lengths = np.full(n_students_d, max_len_here, dtype=int)
+
+        elif list_length_mode == "gaussian":
+            max_len_here = min(list_length_max, len(schools_list))
+            list_lengths = sample_truncated_normal_lengths(
+                n_students=n_students_d,
+                mean=list_length_mean,
+                std=list_length_std,
+                min_len=list_length_min,
+                max_len=max_len_here,
+                rng=rng
+            )
+
+        else:
+            raise ValueError(f"Unknown list_length_mode: {list_length_mode}")
+
+        truncated_rankings = [r[:L] for r, L in zip(rankings, list_lengths)]
+        rankings_as_schools = [[schools_list[idx] for idx in r] for r in truncated_rankings]
+
         all_rankings.extend(rankings_as_schools)
-    
-    log_and_print(f"    Generated {len(all_rankings)} student rankings across {len(districts)} districts ({len(all_chunks)} chunks)", log_file=outfile)
+        all_list_lengths.extend(list_lengths.tolist())
+
+    log_and_print(
+        f" Generated {len(all_rankings)} student rankings across {len(districts)} districts ({len(all_chunks)} chunks)",
+        log_file=outfile
+    )
+
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
-    rankings_as_indices = [np.array([school_to_idx[s] for s in r]) for r in all_rankings]
+
+    rankings_as_indices = [
+        np.array([school_to_idx[s] for s in r]) for r in all_rankings
+    ]
+
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
-    
+
     if per_school_lottery:
         n_students = len(rankings_as_indices)
         n_schools = len(all_schools)
@@ -94,9 +162,24 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     else:
         matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
-    
-    agg = compute_aggregates(all_rankings, matches_schools,
-                            np.array(all_district_assignments), all_schools)
+
+    agg = compute_aggregates(
+        all_rankings,
+        matches_schools,
+        np.array(all_district_assignments),
+        all_schools
+    )
+
+    if return_student_data:
+        student_df = pd.DataFrame({
+            "student_id": np.arange(len(all_rankings)),
+            "district": np.array(all_district_assignments),
+            "list_length": np.array(all_list_lengths),
+            "match": matches_schools,
+            "unmatched": (matches_schools == "-1").astype(int),
+        })
+        return agg, student_df
+
 
     if return_rankings:
         return agg, all_rankings, np.array(all_district_assignments)
@@ -105,13 +188,14 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
 
 def EM_algorithm(df, match_stats_df, school_info_df,
                  max_iter=10, tol=0.01, K=1, M_simulations=20, seed=40, outfile=None, 
-                 sampling_n_jobs=32, max_iter_opt=5, per_school_lottery=False):
+                 sampling_n_jobs=32, max_iter_opt=5, per_school_lottery=False, simulation_kwargs=None):
     """
     EM algorithm with GLOBAL MIXTURE
     """
     
     np.random.seed(seed)
-    
+    simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
+                   
     log_and_print("="*60, log_file=outfile)
     log_and_print("EM ALGORITHM - GLOBAL MIXTURE", log_file=outfile)
     log_and_print("="*60, log_file=outfile)
@@ -153,7 +237,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             school_info_df, M=M_simulations, seed=seed,
             iteration=iteration, outfile=outfile, sampling_n_jobs=sampling_n_jobs,
             executor=warm_executor, max_iter_em=max_iter, max_iter_opt=max_iter_opt,
-            per_school_lottery=per_school_lottery
+            per_school_lottery=per_school_lottery, simulation_kwargs=simulation_kwargs
         )
 
         # Sort them to remove indexing ambiguity
@@ -243,7 +327,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
 def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
                                                    df, match_stats_df, school_info_df,
                                                    M=1, seed=42, iteration=1, outfile=None, 
-                                                   executor=None, sampling_n_jobs=32, per_school_lottery=False):
+                                                   executor=None, sampling_n_jobs=32, per_school_lottery=False, simulation_kwargs=None):
     """
     Compute log-likelihood for ALL districts at once
     
@@ -254,6 +338,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     Returns:
         total_log_lik: Sum of log-likelihoods across all districts
     """
+    simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
     districts = sorted(observed_agg.keys())
     n_students_total = int(match_stats_df['Total Applicants'].sum())
     
@@ -279,7 +364,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         agg = run_single_simulation(
             params_global, df, match_stats_df, school_info_df, 
             lottery_fixed, outfile=outfile, executor=executor,
-            sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery
+            sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery, **simulation_kwargs
         )
 
         total_filled += agg['filled']
@@ -422,7 +507,9 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20, seed=42, iteration=1,
                             sampling_n_jobs=32, outfile=None, executor=None, 
-                            max_iter_em=5, max_iter_opt=5, per_school_lottery=False):
+                            max_iter_em=5, max_iter_opt=5, per_school_lottery=False, simulation_kwargs=None):
+
+    simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     eval_count = [0]
@@ -444,7 +531,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
                 school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile, 
-                executor=executor, sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery
+                executor=executor, sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery, simulation_kwargs=simulation_kwargs
             )
             last_log_like[0] = total_log_lik
             

@@ -115,3 +115,144 @@ def gale_shapley_per_school(student_rankings, school_lottery_numbers, school_cap
             matches[student] = school
     
     return matches
+
+def boston_algorithm(student_rankings, student_lottery_numbers, school_capacities):
+    n_students = len(student_rankings)
+    n_schools = len(school_capacities)
+    
+    student_order = np.argsort(student_lottery_numbers)
+    
+    matches = np.full(n_students, -1)
+    school_assignments = [[] for _ in range(n_schools)]
+    
+    max_rank_length = max(len(ranking) for ranking in student_rankings)
+    
+    for rank in range(max_rank_length):
+        applications = [[] for _ in range(n_schools)]
+        
+        for student in student_order:
+            if matches[student] == -1 and rank < len(student_rankings[student]):
+                school = student_rankings[student][rank]
+                applications[school].append(student)
+        
+        for school in range(n_schools):
+            remaining_seats = school_capacities[school] - len(school_assignments[school])
+            
+            if remaining_seats > 0:
+                accepted = applications[school][:remaining_seats]
+                
+                for student in accepted:
+                    school_assignments[school].append(student)
+                    matches[student] = school
+
+def top_trading_cycles(student_rankings, school_rankings, school_capacities):
+    n_students = len(student_rankings)
+    n_schools = len(school_capacities)
+
+    matches = [-1] * n_students
+    remaining_capacities = list(school_capacities)
+
+    # Pointeur vers la prochaine école encore disponible pour chaque élève
+    next_school_idx = [0] * n_students
+
+    # Pointeur vers le prochain élève encore actif / non affecté pour chaque école
+    next_student_idx = [0] * n_schools
+
+    while True:
+        active_students = []
+        active = [False] * n_students
+        student_points = [-1] * n_students
+
+        # Chaque élève non affecté pointe vers sa meilleure école encore disponible
+        for student in range(n_students):
+            if matches[student] != -1:
+                continue
+
+            prefs = student_rankings[student]
+            i = next_school_idx[student]
+
+            while i < len(prefs) and remaining_capacities[prefs[i]] == 0:
+                i += 1
+
+            next_school_idx[student] = i
+
+            if i < len(prefs):
+                school = prefs[i]
+                student_points[student] = school
+                active_students.append(student)
+                active[student] = True
+
+        if not active_students:
+            break
+
+        school_points = [-1] * n_schools
+
+        # Chaque école pointe vers son meilleur élève encore actif et non affecté
+        for school in range(n_schools):
+            if remaining_capacities[school] <= 0:
+                continue
+
+            ranking = school_rankings[school]
+            i = next_student_idx[school]
+
+            while i < len(ranking):
+                student = ranking[i]
+                if matches[student] == -1 and active[student]:
+                    break
+                i += 1
+
+            next_student_idx[school] = i
+
+            if i < len(ranking):
+                school_points[school] = ranking[i]
+
+        # Détection de tous les cycles disjoints du tour
+        processed = set()
+        cycle_students = []
+
+        for start_student in active_students:
+            start_node = ("student", start_student)
+
+            if start_node in processed:
+                continue
+
+            visited = {}
+            path = []
+            node = start_node
+
+            while node is not None and node not in processed and node not in visited:
+                visited[node] = len(path)
+                path.append(node)
+
+                node_type, idx = node
+
+                if node_type == "student":
+                    school = student_points[idx]
+                    node = None if school == -1 else ("school", school)
+                else:
+                    student = school_points[idx]
+                    node = None if student == -1 else ("student", student)
+
+            # Si on retombe sur un noeud déjà vu dans ce parcours, on a trouvé un cycle
+            if node is not None and node in visited:
+                cycle = path[visited[node]:]
+                for node_type, idx in cycle:
+                    if node_type == "student":
+                        cycle_students.append(idx)
+
+            processed.update(path)
+
+        if not cycle_students:
+            break
+
+        # Exécution simultanée de tous les cycles disjoints du tour
+        for student in cycle_students:
+            matches[student] = student_points[student]
+
+        for student in cycle_students:
+            school = student_points[student]
+            remaining_capacities[school] -= 1
+
+    return matches
+
+

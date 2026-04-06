@@ -77,25 +77,44 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
     student_order = np.argsort(student_lottery_numbers)
     
     matches = np.full(n_students, -1)
-    school_tentative = [[] for _ in range(n_schools)]
+    school_filled = np.zeros(n_schools, dtype=int)
     
     for student in student_order:
         for school in student_rankings[student]:
-            if len(school_tentative[school]) < school_capacities[school]:
-                school_tentative[school].append(student)
+            if school_filled[school] < school_capacities[school]:
+                school_filled[school] += 1
                 matches[student] = school
                 break
-            elif len(school_tentative[school]) > 0: 
-                worst = max(school_tentative[school], 
-                           key=lambda s: student_lottery_numbers[s])
-                if student_lottery_numbers[student] < student_lottery_numbers[worst]:
-                    school_tentative[school].remove(worst)
-                    matches[worst] = -1
-                    school_tentative[school].append(student)
-                    matches[student] = school
-                    break    
+    
     return matches
 
+def gale_shapley_per_school(student_rankings, school_lottery_numbers, school_capacities):
+    n_students = len(student_rankings)
+    
+    free = set(range(n_students))
+    next_proposal = [0] * n_students
+    matches = np.full(n_students, -1)
+    school_held = [[] for _ in range(len(school_capacities))]
+    
+    while free:
+        student = free.pop()
+        if next_proposal[student] >= len(student_rankings[student]):
+            continue
+        school = student_rankings[student][next_proposal[student]]
+        next_proposal[student] += 1
+        
+        school_held[school].append(student)
+        if len(school_held[school]) > school_capacities[school]:
+            rejected = max(school_held[school],
+                          key=lambda s: school_lottery_numbers[school, s])
+            school_held[school].remove(rejected)
+            matches[rejected] = -1
+            free.add(rejected)
+        
+        if student in school_held[school]:
+            matches[student] = school
+    
+    return matches
 
 def boston_algorithm(student_rankings, student_lottery_numbers, school_capacities):
     n_students = len(student_rankings)
@@ -125,9 +144,6 @@ def boston_algorithm(student_rankings, student_lottery_numbers, school_capacitie
                 for student in accepted:
                     school_assignments[school].append(student)
                     matches[student] = school
-    
-    return matches
-
 
 def top_trading_cycles(student_rankings, school_rankings, school_capacities):
     n_students = len(student_rankings)

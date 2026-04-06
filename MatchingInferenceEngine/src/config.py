@@ -15,4 +15,8 @@ POLISHED_DATA_DIR = os.getenv(
     'POLISHED_DATA_DIR',
     '/scratch/rm6609/EduRanker/MatchingInferenceEngine/sample-data/data'
 )
+CHILEAN_DATA_DIR = os.getenv(
+    'CHILEAN_DATA_DIR',
+    '/scratch/rm6609/EduRanker/MatchingInferenceEngine/sample-data/data/chilean_data_processed'
+)
 DATA_GENERATION_SEED = int(os.getenv('DATA_GENERATION_SEED', '44'))

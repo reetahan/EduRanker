@@ -11,7 +11,7 @@ def _find_column(df, aliases):
     return None
 
 def main():
-    # Update this path to your data directory
+
     data_dir = Path("/scratch/rm6609/EduRanker/MatchingInferenceEngine/sample-data/data/chilean_data_processed")
     excel_files = sorted(list(data_dir.glob("*.xlsx")) + list(data_dir.glob("*.xls")))
 

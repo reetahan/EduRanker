@@ -5,12 +5,13 @@ import copy
 from concurrent.futures import ProcessPoolExecutor
 from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
-from gale_shapley import gale_shapley, compute_aggregates
+from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school
 from mallows import  _sample_students_chunk
 
 def run_single_simulation(params, df, match_stats_df, school_info_df, 
-                         lottery_global, k_ranking_length=10, outfile=None,
-                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None):
+                         lottery_global=None, k_ranking_length=10, outfile=None,
+                         sampling_n_jobs=32, sampling_chunk_size=2000, executor=None,
+                         per_school_lottery=False, return_rankings=False):
     
     
     all_rankings = []
@@ -19,7 +20,7 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     
     # Collect all chunks across all districts
     all_chunks = []  # (district, schools_list, sigma_indices, chunk_components, seed)
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=np.random.randint(0, 2**32))
     
     for district in districts:
         n_students = int(match_stats_df[
@@ -85,17 +86,26 @@ def run_single_simulation(params, df, match_stats_df, school_info_df,
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     
-    matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
+    if per_school_lottery:
+        n_students = len(rankings_as_indices)
+        n_schools = len(all_schools)
+        school_lotteries = rng.random((n_schools, n_students))
+        matches_idx = gale_shapley_per_school(rankings_as_indices, school_lotteries, capacities)
+    else:
+        matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
     
     agg = compute_aggregates(all_rankings, matches_schools,
                             np.array(all_district_assignments), all_schools)
+
+    if return_rankings:
+        return agg, all_rankings, np.array(all_district_assignments)
     return agg
 
 
 def EM_algorithm(df, match_stats_df, school_info_df,
                  max_iter=10, tol=0.01, K=1, M_simulations=20, seed=40, outfile=None, 
-                 sampling_n_jobs=32, max_iter_opt=5):
+                 sampling_n_jobs=32, max_iter_opt=5, per_school_lottery=False):
     """
     EM algorithm with GLOBAL MIXTURE
     """
@@ -142,7 +152,8 @@ def EM_algorithm(df, match_stats_df, school_info_df,
             params, observed_agg, df, match_stats_df, 
             school_info_df, M=M_simulations, seed=seed,
             iteration=iteration, outfile=outfile, sampling_n_jobs=sampling_n_jobs,
-            executor=warm_executor, max_iter_em=max_iter, max_iter_opt=max_iter_opt
+            executor=warm_executor, max_iter_em=max_iter, max_iter_opt=max_iter_opt,
+            per_school_lottery=per_school_lottery
         )
 
         # Sort them to remove indexing ambiguity
@@ -232,7 +243,7 @@ def initialize_parameters_global_mixture(districts, df, K=1):
 def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
                                                    df, match_stats_df, school_info_df,
                                                    M=1, seed=42, iteration=1, outfile=None, 
-                                                   executor=None, sampling_n_jobs=32):
+                                                   executor=None, sampling_n_jobs=32, per_school_lottery=False):
     """
     Compute log-likelihood for ALL districts at once
     
@@ -256,7 +267,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     
     # Fixed lottery across all M simulations
     rng_lottery = np.random.default_rng(seed=seed)
-    lottery_fixed = rng_lottery.permutation(n_students_total)
+    lottery_fixed = None if per_school_lottery else rng_lottery.permutation(n_students_total)
     
     for sim in range(M):
         log_and_print(f"      Simulation {sim+1}/{M}...", log_file=outfile)
@@ -268,7 +279,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         agg = run_single_simulation(
             params_global, df, match_stats_df, school_info_df, 
             lottery_fixed, outfile=outfile, executor=executor,
-            sampling_n_jobs=sampling_n_jobs
+            sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery
         )
 
         total_filled += agg['filled']
@@ -411,7 +422,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
 def optimize_global_mixture(params, observed_agg, df, match_stats_df, 
                             school_info_df, M=20, seed=42, iteration=1,
                             sampling_n_jobs=32, outfile=None, executor=None, 
-                            max_iter_em=5, max_iter_opt=5):
+                            max_iter_em=5, max_iter_opt=5, per_school_lottery=False):
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     eval_count = [0]
@@ -433,7 +444,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             total_log_lik = compute_log_likelihood_gaussian_all_districts(
                 params, observed_agg, df, match_stats_df, 
                 school_info_df, M=M, seed=seed, iteration=iteration, outfile=outfile, 
-                executor=executor, sampling_n_jobs=sampling_n_jobs
+                executor=executor, sampling_n_jobs=sampling_n_jobs, per_school_lottery=per_school_lottery
             )
             last_log_like[0] = total_log_lik
             
@@ -452,13 +463,13 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     # Average M simulations to get robust aggregate for the nudge
     n_students_total = int(match_stats_df['Total Applicants'].sum())
     # Fixed lottery across all M simulations
-    lottery_fixed = np.random.permutation(n_students_total)
+    lottery_fixed = None if per_school_lottery else np.random.permutation(n_students_total)
     agg_accum = None
     for sim in range(M):
         # Only vary the Mallows preference sampling, not the lottery
         np.random.seed(seed + sim)
         log_and_print(f"  [EM iter {iteration+1}/{max_iter_em}] Final averaging sim {sim+1}/{M}...", log_file=outfile)
-        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, 
+        agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, per_school_lottery=per_school_lottery,
                                         sampling_n_jobs=sampling_n_jobs, outfile=outfile, executor=executor)
         
         if agg_accum is None:

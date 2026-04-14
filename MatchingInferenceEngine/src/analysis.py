@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 from config import EXP_OUT_FOLDER
 
 def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
@@ -57,6 +58,9 @@ def log_and_print(message, log_file=None):
     text = str(message)
     print(text, flush=True)
     if log_file is not None:
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
         f = open(log_file, "a+", buffering=1)
         f.write(text + '\n')
         f.flush()

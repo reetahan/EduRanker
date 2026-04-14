@@ -18,6 +18,10 @@ from scipy.stats import kendalltau
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import random
+
+TARGET_SUBSAMPLE_PARAM_KEY = (4, 4, 4, 4)
+TARGET_SUBSAMPLE_RANDOM_SEED = 123
 
 
 # ============================================================
@@ -61,6 +65,7 @@ class ExperimentResult:
     max_iter: int
     max_iter_opt: int
     seed: str
+    imputed_seed: Optional[str] = None
     final_phis: list = field(default_factory=list)
     final_weights: list = field(default_factory=list)
     central_rankings: dict = field(default_factory=dict)
@@ -93,19 +98,20 @@ def parse_filename(filename):
     max_iter = int(_extract(r'iter[_=](\d+)', basename, '0'))
     max_iter_opt = int(_extract(r'opt[_=](\d+)', basename, '0'))
     seed = _extract(r'seed[_=](\d+)', basename, None) or 'default'
+    imputed_seed = _extract(r'imputed_seed[_=](\d+)', basename, None)
     date_match = re.search(r'(\d{8})_\d{6}', basename)
     date_str = date_match.group(1) if date_match else None
 
-    return K, M, max_iter, max_iter_opt, seed, date_str
+    return K, M, max_iter, max_iter_opt, seed, imputed_seed, date_str
 
 
 def parse_log_file(filepath):
     filename = os.path.basename(filepath)
-    K, M, max_iter, max_iter_opt, seed, date_str = parse_filename(filename)
+    K, M, max_iter, max_iter_opt, seed, imputed_seed, date_str = parse_filename(filename)
 
     result = ExperimentResult(
         filename=filename, K=K, M=M, max_iter=max_iter,
-        max_iter_opt=max_iter_opt, seed=seed,
+        max_iter_opt=max_iter_opt, seed=seed, imputed_seed=imputed_seed,
     )
 
     with open(filepath, 'r') as f:
@@ -216,7 +222,7 @@ def find_and_parse_logs(results_dir, min_date='20260324'):
     for fname in sorted(os.listdir(results_dir)):
         if not fname.endswith('.txt') or not (fname.startswith('real_experiment') or fname.startswith('chilean_experiment')):
             continue
-        _, _, _, _, _, date_str = parse_filename(fname)
+        _, _, _, _, _, _, date_str = parse_filename(fname)
         if date_str is None or date_str < min_date:
             continue
         filepath = os.path.join(results_dir, fname)
@@ -230,6 +236,50 @@ def find_and_parse_logs(results_dir, min_date='20260324'):
     return results
 
 
+def subsample_one_per_imputed_seed(results, random_seed=0, param_key=None):
+    """Deterministically pick one run per imputed seed.
+
+    Args:
+        results: Parsed experiment results.
+        random_seed: Seed used to choose among duplicate files for the same imputed seed.
+        param_key: Optional exact param_key tuple to restrict which runs are eligible.
+    """
+    if param_key is None:
+        target_group = list(results)
+        untouched = []
+    else:
+        target_group = [r for r in results if r.param_key == param_key]
+        untouched = [r for r in results if r.param_key != param_key]
+
+    eligible = [r for r in target_group if r.imputed_seed is not None]
+
+    grouped = defaultdict(list)
+    for result in eligible:
+        grouped[result.imputed_seed].append(result)
+
+    rng = random.Random(random_seed)
+    selected = []
+    for imputed_seed in sorted(grouped.keys()):
+        group = sorted(grouped[imputed_seed], key=lambda r: r.filename)
+        chosen = group[rng.randrange(len(group))]
+        selected.append(chosen)
+
+    passthrough = [r for r in target_group if r.imputed_seed is None]
+    filtered = untouched + passthrough + selected
+    filtered.sort(key=lambda r: r.filename)
+
+    print(
+        f"Subsampled imputed runs: kept {len(selected)} of {len(eligible)} eligible runs "
+        f"across {len(grouped)} imputed seeds (seed={random_seed})."
+    )
+    if param_key is not None:
+        print(
+            f"Subsample applied only to param_key={param_key}; "
+            f"kept {len(untouched)} runs from other configs unchanged."
+        )
+    return filtered
+
+
 # ============================================================
 # Report generation
 # ============================================================
@@ -237,6 +287,7 @@ def find_and_parse_logs(results_dir, min_date='20260324'):
 def generate_report(results, out_path=None):
     lines = []
     w = lines.append
+
 
     w("=" * 100)
     w("EDURANKER EXPERIMENT RESULTS REPORT")
@@ -343,48 +394,49 @@ def generate_report(results, out_path=None):
                     vals = [p[k_idx] for p in all_phis if len(p) > k_idx]
                     w(f"      phi[{k_idx+1}]: mean={np.mean(vals):.4f}  std={np.std(vals):.4f}  [{min(vals):.4f}, {max(vals):.4f}]")
 
-    # --- Parameter sensitivity ---
-    # --- Parameter sensitivity (param sweep runs only) ---
-    param_sweep_runs = [r for r in results if r.seed == 'default']
-    sweep_by_params = defaultdict(list)
-    for r in param_sweep_runs:
-        sweep_by_params[r.param_key].append(r)
+    # --- Parameter sensitivity (averaged across seeds per config) ---
+    all_by_params = defaultdict(list)
+    for r in results:
+        all_by_params[r.param_key].append(r)
 
     w(f"\n{'='*100}")
-    w("PARAMETER SENSITIVITY (default seed runs only)")
+    w("PARAMETER SENSITIVITY (averaged across seeds per config)")
     w(f"{'='*100}")
-    if param_sweep_runs:
-        # Show all configs
-        w(f"\n  All default-seed configs:")
-        w(f"  {'K':<4} {'M':<4} {'Iter':<5} {'Opt':<5} {'Best LL':<16} {'Util MAE':<10}")
-        w(f"  {'-'*50}")
-        for param_key, group in sorted(sweep_by_params.items()):
-            K, M_val, max_iter, max_iter_opt = param_key
+
+    w(f"\n  All configs:")
+    w(f"  {'K':<4} {'M':<4} {'Iter':<5} {'Opt':<5} {'n':<5} {'Best LL (mean+/-std)':<28} {'Util MAE (mean+/-std)':<24}")
+    w(f"  {'-'*80}")
+    for param_key, group in sorted(all_by_params.items()):
+        K, M_val, max_iter, max_iter_opt = param_key
+        lls = [r.best_log_likelihood for r in group if r.best_log_likelihood is not None]
+        maes = [r.best_util_mae for r in group if r.best_util_mae is not None]
+        n = len(group)
+        ll_str = f"{np.mean(lls):.1f}+/-{np.std(lls):.1f}" if lls else "N/A"
+        mae_str = f"{np.mean(maes):.1f}+/-{np.std(maes):.1f}%" if maes else "N/A"
+        w(f"  {K:<4} {M_val:<4} {max_iter:<5} {max_iter_opt:<5} {n:<5} {ll_str:<28} {mae_str}")
+
+    baseline_key = min(set(r.param_key for r in results))
+    baseline_K, baseline_M, baseline_iter, baseline_opt = baseline_key
+    baseline_vals = {'K': baseline_K, 'M': baseline_M, 'max_iter': baseline_iter, 'max_iter_opt': baseline_opt}
+    w(f"\n  Baseline config: K={baseline_K}, M={baseline_M}, iter={baseline_iter}, opt={baseline_opt}")
+
+    for vary_param, label in [('K', 'K'), ('M', 'M'), ('max_iter', 'max_iter'), ('max_iter_opt', 'max_iter_opt')]:
+        other_params = [p for p in ['K', 'M', 'max_iter', 'max_iter_opt'] if p != vary_param]
+        sweep_results = [r for r in results if all(getattr(r, p) == baseline_vals[p] for p in other_params)]
+        val_groups = defaultdict(list)
+        for r in sweep_results:
+            val_groups[getattr(r, vary_param)].append(r)
+        if len(val_groups) < 2:
+            continue
+        w(f"\n  Varying {label} (others held at baseline):")
+        for val in sorted(val_groups.keys()):
+            group = val_groups[val]
             lls = [r.best_log_likelihood for r in group if r.best_log_likelihood is not None]
             maes = [r.best_util_mae for r in group if r.best_util_mae is not None]
-            ll_str = f"{np.mean(lls):.1f}" if lls else "N/A"
-            mae_str = f"{np.mean(maes):.1f}%" if maes else "N/A"
-            w(f"  {K:<4} {M_val:<4} {max_iter:<5} {max_iter_opt:<5} {ll_str:<16} {mae_str}")
-
-        baseline_key = min(set(r.param_key for r in param_sweep_runs))
-        baseline_K, baseline_M, baseline_iter, baseline_opt = baseline_key
-        baseline_vals = {'K': baseline_K, 'M': baseline_M, 'max_iter': baseline_iter, 'max_iter_opt': baseline_opt}
-        w(f"\n  Baseline config: K={baseline_K}, M={baseline_M}, iter={baseline_iter}, opt={baseline_opt}")
-
-        # Per-parameter sweeps
-        for vary_param, label in [('K', 'K'), ('M', 'M'), ('max_iter', 'max_iter'), ('max_iter_opt', 'max_iter_opt')]:
-            other_params = [p for p in ['K', 'M', 'max_iter', 'max_iter_opt'] if p != vary_param]
-            sweep_results = [r for r in param_sweep_runs if all(getattr(r, p) == baseline_vals[p] for p in other_params)]
-            if len(set(getattr(r, vary_param) for r in sweep_results)) < 2:
-                continue
-            w(f"\n  Varying {label} (others held at baseline):")
-            for r in sorted(sweep_results, key=lambda x: getattr(x, vary_param)):
-                val = getattr(r, vary_param)
-                ll_str = f"{r.best_log_likelihood:.1f}" if r.best_log_likelihood else "N/A"
-                mae_str = f"{r.best_util_mae:.1f}%" if r.best_util_mae else "N/A"
-                w(f"    {label}={val:<4}  LL={ll_str:<16}  MAE={mae_str}")
-    else:
-        w("  No default-seed param sweep runs found.")
+            n = len(group)
+            ll_str = f"{np.mean(lls):.1f}+/-{np.std(lls):.1f}" if lls else "N/A"
+            mae_str = f"{np.mean(maes):.1f}+/-{np.std(maes):.1f}%" if maes else "N/A"
+            w(f"    {label}={val:<4}  n={n:<4}  LL={ll_str:<28}  MAE={mae_str}")
 
     report_text = '\n'.join(lines)
 
@@ -405,25 +457,20 @@ def generate_plots(results, plots_dir='.'):
 
     os.makedirs(plots_dir, exist_ok=True)
 
-    # Split: imputation runs have non-default seeds, param sweep runs use default seed
     imputation_runs = [r for r in results if r.seed != 'default']
-    param_sweep_runs = [r for r in results if r.seed == 'default']
 
-    # Group imputation runs by param config (for cross-seed analysis)
     imputation_by_params = defaultdict(list)
     for r in imputation_runs:
         imputation_by_params[r.param_key].append(r)
 
-    # Group param sweep runs by param config
-    sweep_by_params = defaultdict(list)
-    for r in param_sweep_runs:
-        sweep_by_params[r.param_key].append(r)
+    by_all_params = defaultdict(list)
+    for r in results:
+        by_all_params[r.param_key].append(r)
 
-    print(f"  Imputation runs: {len(imputation_runs)}, Param sweep runs: {len(param_sweep_runs)}")
+    print(f"  Imputation runs: {len(imputation_runs)}, Total runs: {len(results)}")
 
-    # Param sensitivity: only from param sweep runs (default seed)
-    if param_sweep_runs:
-        _plot_parameter_sensitivity(param_sweep_runs, sweep_by_params, plots_dir)
+    # Param sensitivity: all results, averaged across seeds
+    _plot_parameter_sensitivity(results, by_all_params, plots_dir)
 
     # Best run: from all results
     _plot_best_run_district_fit(results, plots_dir)
@@ -436,20 +483,19 @@ def generate_plots(results, plots_dir='.'):
 
 
 def _plot_parameter_sensitivity(results, by_params, plots_dir):
+    """Plot parameter sensitivity, averaging across seeds per config."""
     if not results:
         return
 
+    # Find baseline: config with smallest param tuple
     baseline_key = min(set(r.param_key for r in results))
     baseline_K, baseline_M, baseline_iter, baseline_opt = baseline_key
-
-    param_to_idx = {'K': 0, 'M': 1, 'max_iter': 2, 'max_iter_opt': 3}
     baseline_vals = {'K': baseline_K, 'M': baseline_M, 'max_iter': baseline_iter, 'max_iter_opt': baseline_opt}
 
     for vary_param, label in [('K', 'K'), ('M', 'M'), ('max_iter', 'max_iter'), ('max_iter_opt', 'max_iter_opt')]:
         val_to_lls = defaultdict(list)
         val_to_maes = defaultdict(list)
 
-        # Only include runs where all OTHER params match the baseline
         other_params = [p for p in ['K', 'M', 'max_iter', 'max_iter_opt'] if p != vary_param]
 
         for r in results:
@@ -470,10 +516,10 @@ def _plot_parameter_sensitivity(results, by_params, plots_dir):
         stds = [np.std(val_to_lls[v]) for v in vals]
         counts = [len(val_to_lls[v]) for v in vals]
         ax1.errorbar(vals, means, yerr=stds, marker='o', capsize=5)
-        #for v, m, n in zip(vals, means, counts):
-        #    ax1.annotate(f'n={n}', (v, m), textcoords="offset points", xytext=(0, 10), fontsize=8, ha='center')
+        for v, m, n in zip(vals, means, counts):
+            ax1.annotate(f'n={n}', (v, m), textcoords="offset points", xytext=(0, 10), fontsize=8, ha='center')
         ax1.set_xlabel(label)
-        ax1.set_ylabel('Best Log-Likelihood')
+        ax1.set_ylabel('Best Log-Likelihood (mean over seeds)')
         ax1.set_title(f'Log-Likelihood vs {label}\n(others held at K={baseline_K}, M={baseline_M}, iter={baseline_iter}, opt={baseline_opt})')
         ax1.grid(True, alpha=0.3)
 
@@ -481,8 +527,10 @@ def _plot_parameter_sensitivity(results, by_params, plots_dir):
         means_mae = [np.mean(val_to_maes[v]) for v in vals_mae]
         stds_mae = [np.std(val_to_maes[v]) for v in vals_mae]
         ax2.errorbar(vals_mae, means_mae, yerr=stds_mae, marker='s', capsize=5, color='orange')
+        for v, m, n in zip(vals_mae, means_mae, [len(val_to_maes[v]) for v in vals_mae]):
+            ax2.annotate(f'n={n}', (v, m), textcoords="offset points", xytext=(0, 10), fontsize=8, ha='center')
         ax2.set_xlabel(label)
-        ax2.set_ylabel('Utilization MAE (%)')
+        ax2.set_ylabel('Utilization MAE % (mean over seeds)')
         ax2.set_title(f'Utilization MAE vs {label}')
         ax2.grid(True, alpha=0.3)
 
@@ -866,7 +914,7 @@ def compare_synthetic_to_real_rankings(syn_csv_path, indv_df_path, plots_dir=Non
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse EduRanker experiment logs and generate reports')
     parser.add_argument('--results-dir', type=str, required=True, help='Path to experiment-results directory')
-    parser.add_argument('--min-date', type=str, default='20260401', help='Minimum date in YYYYMMDD format')
+    parser.add_argument('--min-date', type=str, default='20260408', help='Minimum date in YYYYMMDD format')
     parser.add_argument('--report-out', type=str, default=None, help='Path to write text report')
     parser.add_argument('--plots-dir', type=str, default=None, help='Directory to save plots')
     parser.add_argument('--compare-rankings', action='store_true', help='Compare synthetic vs real rankings')
@@ -895,6 +943,11 @@ if __name__ == '__main__':
         if not results:
             print("No completed experiments found.")
             exit(0)
+        results = subsample_one_per_imputed_seed(
+            results,
+            random_seed=TARGET_SUBSAMPLE_RANDOM_SEED,
+            param_key=TARGET_SUBSAMPLE_PARAM_KEY,
+        )
         generate_report(results, out_path=args.report_out)
         if args.plots_dir:
             print(f"\nGenerating plots...")

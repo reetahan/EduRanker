@@ -1,14 +1,12 @@
 #!/bin/bash
 
-set -euo pipefail
-
 #SBATCH --job-name=eduranker_imputations                             
 #SBATCH --nodes=1                    
 #SBATCH --cpus-per-task=64             
 #SBATCH --mem=8GB                     
 #SBATCH --time=40:10:00             
 #SBATCH --account=torch_pr_594_tandon_priority
-#SBATCH --array=0-2799
+#SBATCH --array=0-1699
 #SBATCH --output=/scratch/rm6609/EduRanker/MatchingInferenceEngine/experiment-results/mass-sim-logs/job_%A_%a.log
 #SBATCH --mail-user=rm6609@nyu.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -26,8 +24,9 @@ OVERLAY="/scratch/rm6609/research/overlay-persistent-manual.ext3"
 IMAGE="/share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif"
 WORKDIR="/scratch/rm6609/EduRanker/MatchingInferenceEngine"
 CONDA_ENV="research"
-PARAMS=("K" "M" "MAX_ITER" "MAX_ITER_OPT")
-VALUES=(4 5 6 7 8 9 10)
+#PARAMS=("K" "M" "MAX_ITER" "MAX_ITER_OPT")
+PARAMS=("K")
+VALUES=(4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
 N_IMPUTATIONS=100
 N_PARAMS=${#PARAMS[@]}
 N_VALUES=${#VALUES[@]}

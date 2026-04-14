@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from analysis import log_and_print
+from numba import njit
 
 def compute_aggregates(student_rankings, matches, district_assignments, schools_list):
     n_students = len(student_rankings)
@@ -70,6 +71,21 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
         'filled': filled
     }
 
+def gale_shapley_per_school_numba_wrapper(student_rankings, school_lottery_numbers, school_capacities):
+    max_len = max(len(r) for r in student_rankings)
+    n = len(student_rankings)
+    padded = np.full((n, max_len), -1, dtype=np.int32)
+    lengths = np.empty(n, dtype=np.int32)
+    for i, r in enumerate(student_rankings):
+        L = len(r)
+        padded[i, :L] = r
+        lengths[i] = L
+    return gale_shapley_per_school_numba(
+        padded, lengths,
+        school_lottery_numbers.astype(np.float64),
+        np.asarray(school_capacities, dtype=np.int32),
+    )
+
 def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
     n_students = len(student_rankings)
     n_schools = len(school_capacities)
@@ -86,6 +102,82 @@ def gale_shapley(student_rankings, student_lottery_numbers, school_capacities):
                 matches[student] = school
                 break
     
+    return matches
+
+@njit
+def gale_shapley_per_school_numba(
+    padded_rankings,
+    ranking_lengths,
+    school_lottery,
+    school_capacities,
+):
+    n_students = padded_rankings.shape[0]
+    n_schools = school_capacities.shape[0]
+    max_cap = np.max(school_capacities)
+
+    matches = np.full(n_students, -1, dtype=np.int32)
+    next_proposal = np.zeros(n_students, dtype=np.int32)
+
+    school_held = np.full((n_schools, max_cap), -1, dtype=np.int32)
+    school_count = np.zeros(n_schools, dtype=np.int32)
+    # Cache the worst lottery number among held students per school
+    school_worst_lottery = np.full(n_schools, -1.0, dtype=np.float64)
+
+    stack = np.empty(n_students, dtype=np.int32)
+    for i in range(n_students):
+        stack[i] = i
+    stack_size = n_students
+
+    while stack_size > 0:
+        stack_size -= 1
+        student = stack[stack_size]
+
+        if next_proposal[student] >= ranking_lengths[student]:
+            continue
+
+        school = padded_rankings[student, next_proposal[student]]
+        next_proposal[student] += 1
+        s_lot = school_lottery[school, student]
+        cnt = school_count[school]
+        cap = school_capacities[school]
+
+        if cnt < cap:
+            # Room available — accept directly
+            school_held[school, cnt] = student
+            school_count[school] = cnt + 1
+            matches[student] = school
+            if s_lot > school_worst_lottery[school]:
+                school_worst_lottery[school] = s_lot
+        elif s_lot < school_worst_lottery[school]:
+            # Proposer beats the cached worst — find and replace
+            worst_idx = 0
+            worst_lot = school_lottery[school, school_held[school, 0]]
+            for j in range(1, cap):
+                lot_j = school_lottery[school, school_held[school, j]]
+                if lot_j > worst_lot:
+                    worst_lot = lot_j
+                    worst_idx = j
+
+            rejected = school_held[school, worst_idx]
+            school_held[school, worst_idx] = student
+            matches[rejected] = -1
+            matches[student] = school
+
+            # Recompute cached worst
+            new_worst_lot = -1.0
+            for j in range(cap):
+                lot_j = school_lottery[school, school_held[school, j]]
+                if lot_j > new_worst_lot:
+                    new_worst_lot = lot_j
+            school_worst_lottery[school] = new_worst_lot
+
+            stack[stack_size] = rejected
+            stack_size += 1
+        else:
+            # Proposer is worse than everyone held — instant reject, O(1)
+            stack[stack_size] = student
+            stack_size += 1
+
     return matches
 
 def gale_shapley_per_school(student_rankings, school_lottery_numbers, school_capacities):

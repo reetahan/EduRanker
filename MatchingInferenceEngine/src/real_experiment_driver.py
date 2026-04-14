@@ -19,7 +19,8 @@ simulation_kwargs = {
 }
 
 def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
-             sampling_n_jobs=32, max_iter_opt=5, seed=40, n_welfare_sims=5):
+             sampling_n_jobs=32, max_iter_opt=5, seed=40, n_welfare_sims=5,
+             profile_timing=False):
     if df_filepath is None:
         df_filepath = f"{POLISHED_DATA_DIR}/master_data_03_residential_district.xlsx"
 
@@ -45,6 +46,9 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
     log_and_print(f"school_info_df rows: {len(school_info_df)}", outfile)
     log_and_print(f"school_info_df unique schools: {school_info_df['School DBN'].nunique()}", outfile)
 
+    run_simulation_kwargs = dict(simulation_kwargs)
+    run_simulation_kwargs["profile_timing"] = profile_timing
+
     params, lottery, log_likelihoods, final_agg = EM_algorithm(
         df,
         match_stats_df,
@@ -56,7 +60,7 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
         sampling_n_jobs=sampling_n_jobs,
         max_iter_opt=max_iter_opt,
         seed=seed,
-        simulation_kwargs=simulation_kwargs
+        simulation_kwargs=run_simulation_kwargs
     )
 
     welfare = run_welfare_analysis(
@@ -67,7 +71,8 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
         n_welfare_sims=n_welfare_sims,
         outfile=outfile,
         sampling_n_jobs=sampling_n_jobs,
-        seed=seed
+        seed=seed,
+        profile_timing=profile_timing,
     )
 
     log_and_print("===== RUN COMPLETE =====", log_file=outfile)
@@ -87,7 +92,8 @@ def run_welfare_analysis(
     n_welfare_sims=50,
     outfile=None,
     sampling_n_jobs=32,
-    seed=40
+    seed=40,
+    profile_timing=False,
 ):
     rng = np.random.default_rng(seed)
     total_students = int(match_stats_df['Total Applicants'].sum())
@@ -110,7 +116,8 @@ def run_welfare_analysis(
             list_length_max=simulation_kwargs["list_length_max"],
             return_student_data=True,
             outfile=outfile,
-            sampling_n_jobs=sampling_n_jobs
+            sampling_n_jobs=sampling_n_jobs,
+            profile_timing=profile_timing,
         )
 
         student_df["sim"] = sim
@@ -134,11 +141,12 @@ if __name__ == "__main__":
     parser.add_argument('--final-analysis', action='store_true', help='Run final aggregation and plotting step')
     parser.add_argument('--n_jobs', type=int, default=64, help='Number of parallel workers')
     parser.add_argument('--n_welfare_sims', type=int, default=5, help='Number of post-EM welfare simulations')
+    parser.add_argument('--profile_timing', action='store_true', help='Enable detailed timing logs')
     args = parser.parse_args()
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     df_filename = os.path.splitext(os.path.basename(args.df_filepath))[0] if args.df_filepath else "default"
-    outfile = f'{EXP_OUT_FOLDER}real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_opt={args.max_iter_opt}_{df_filename}_{timestamp}.txt'
+    outfile = f'{EXP_OUT_FOLDER}nyc_res_logs/{timestamp}/real_experiment_K={args.K}_M={args.M}_iter={args.max_iter}_opt={args.max_iter_opt}_{df_filename}_{timestamp}.txt'
     run_real(
     outfile=outfile,
     df_filepath=args.df_filepath,
@@ -148,5 +156,6 @@ if __name__ == "__main__":
     sampling_n_jobs=args.n_jobs,
     max_iter_opt=args.max_iter_opt,
     seed=args.seed,
-    n_welfare_sims=args.n_welfare_sims
+    n_welfare_sims=args.n_welfare_sims,
+    profile_timing=args.profile_timing,
 )

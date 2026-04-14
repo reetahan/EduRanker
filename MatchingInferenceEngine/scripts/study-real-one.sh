@@ -16,11 +16,18 @@ M=10
 MAX_ITER=10
 MAX_ITER_OPT=10
 N_JOBS=64
+PROFILE_TIMING=1
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
+
+PROFILE_ARG=""
+if [[ "$PROFILE_TIMING" -eq 1 ]]; then
+    PROFILE_ARG="--profile_timing"
+fi
 
 
 echo "========================================"
 echo "Job Start: $TIMESTAMP | Seed: $SEED"
+echo "Profile timing: $PROFILE_TIMING"
 echo "========================================"
 
 OVERLAY="/scratch/rm6609/research/overlay-persistent-manual.ext3"
@@ -30,7 +37,7 @@ singularity exec --fakeroot --overlay "$OVERLAY:ro" \
 /bin/bash -c "
     source /ext3/env.sh
     cd /scratch/rm6609/EduRanker/MatchingInferenceEngine
-    python3 src/real_experiment_driver.py --seed $SEED --K $K --M $M --max_iter $MAX_ITER --max_iter_opt $MAX_ITER_OPT --n_jobs $N_JOBS
+    python3 src/real_experiment_driver.py --seed $SEED --K $K --M $M --max_iter $MAX_ITER --max_iter_opt $MAX_ITER_OPT --n_jobs $N_JOBS $PROFILE_ARG
 "
 
 echo "Job End: $(date '+%Y-%m-%d_%H-%M-%S')"

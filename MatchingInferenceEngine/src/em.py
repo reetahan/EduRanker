@@ -2,10 +2,11 @@ import pandas as pd
 import numpy as np
 from scipy.optimize import minimize_scalar
 import copy
+import time
 from concurrent.futures import ProcessPoolExecutor
 from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
-from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school
+from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school, gale_shapley_per_school_numba_wrapper
 from mallows import  _sample_students_chunk
 from list_length import sample_truncated_normal_lengths
 
@@ -26,8 +27,16 @@ def run_single_simulation(
     sampling_n_jobs=32,
     sampling_chunk_size=2000,
     executor=None,
-                         per_school_lottery=False, return_rankings=False
+    per_school_lottery=False,
+    return_rankings=False,
+    profile_timing=False,
 ):
+    t_total_start = time.perf_counter()
+    timings = {}
+
+    def _mark_timing(label, t_start):
+        timings[label] = timings.get(label, 0.0) + (time.perf_counter() - t_start)
+
     all_rankings = []
     all_district_assignments = []
     all_list_lengths = []
@@ -35,6 +44,7 @@ def run_single_simulation(
     districts = list(params['districts'].keys())
 
     # Collect all chunks across all districts
+    t_chunks_start = time.perf_counter()
     all_chunks = []  # (district, schools_list, sigma_indices, chunk_components, seed)
     rng = np.random.default_rng(seed=np.random.randint(0, 2**32))
     
@@ -63,10 +73,12 @@ def run_single_simulation(
             )
 
         all_district_assignments.extend([district] * n_students)
+    _mark_timing('build_chunks', t_chunks_start)
 
     # ONE pool for all districts
     results_by_district = {d: [] for d in districts}
 
+    t_sampling_start = time.perf_counter()
     if sampling_n_jobs > 1 and executor is not None:
         futures = []
         for district, schools_list, sigma_indices, chunk, seed in all_chunks:
@@ -108,8 +120,10 @@ def run_single_simulation(
                     seed
                 )
             )
+    _mark_timing('sample_preferences', t_sampling_start)
 
     # Convert to school DBNs and truncate
+    t_convert_start = time.perf_counter()
     for district in districts:
         schools_list = params['districts'][district]['schools']
         rankings = results_by_district[district]
@@ -138,12 +152,14 @@ def run_single_simulation(
 
         all_rankings.extend(rankings_as_schools)
         all_list_lengths.extend(list_lengths.tolist())
+    _mark_timing('convert_and_truncate', t_convert_start)
 
     log_and_print(
         f" Generated {len(all_rankings)} student rankings across {len(districts)} districts ({len(all_chunks)} chunks)",
         log_file=outfile
     )
 
+    t_match_prep_start = time.perf_counter()
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
 
@@ -153,22 +169,53 @@ def run_single_simulation(
 
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
+    _mark_timing('prepare_matching_inputs', t_match_prep_start)
 
+    t_matching_start = time.perf_counter()
     if per_school_lottery:
         n_students = len(rankings_as_indices)
         n_schools = len(all_schools)
         school_lotteries = rng.random((n_schools, n_students))
-        matches_idx = gale_shapley_per_school(rankings_as_indices, school_lotteries, capacities)
+        #matches_idx = gale_shapley_per_school(rankings_as_indices, school_lotteries, capacities)
+        matches_idx = gale_shapley_per_school_numba_wrapper(rankings_as_indices, school_lotteries, capacities)
     else:
         matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
+    _mark_timing('matching', t_matching_start)
 
+    t_agg_start = time.perf_counter()
     agg = compute_aggregates(
         all_rankings,
         matches_schools,
         np.array(all_district_assignments),
         all_schools
     )
+    _mark_timing('compute_aggregates', t_agg_start)
+
+    if profile_timing:
+        timings['total'] = time.perf_counter() - t_total_start
+        log_and_print(
+            (
+                " [TIMING] run_single_simulation "
+                f"total={timings['total']:.3f}s | "
+                f"build_chunks={timings.get('build_chunks', 0.0):.3f}s | "
+                f"sample_preferences={timings.get('sample_preferences', 0.0):.3f}s | "
+                f"convert_and_truncate={timings.get('convert_and_truncate', 0.0):.3f}s | "
+                f"prepare_matching_inputs={timings.get('prepare_matching_inputs', 0.0):.3f}s | "
+                f"matching={timings.get('matching', 0.0):.3f}s | "
+                f"compute_aggregates={timings.get('compute_aggregates', 0.0):.3f}s"
+            ),
+            log_file=outfile,
+        )
+        log_and_print(
+            (
+                " [TIMING] workload "
+                f"districts={len(districts)} | students={len(all_rankings)} | "
+                f"chunks={len(all_chunks)} | sampling_n_jobs={sampling_n_jobs} | "
+                f"chunk_size={sampling_chunk_size}"
+            ),
+            log_file=outfile,
+        )
 
     if return_student_data:
         student_df = pd.DataFrame({
@@ -195,6 +242,7 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     
     np.random.seed(seed)
     simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
+    profile_timing = bool(simulation_kwargs.get('profile_timing', False))
                    
     log_and_print("="*60, log_file=outfile)
     log_and_print("EM ALGORITHM - GLOBAL MIXTURE", log_file=outfile)
@@ -211,6 +259,8 @@ def EM_algorithm(df, match_stats_df, school_info_df,
     log_and_print(f"  Max iterations of EM Algorithm: {max_iter}", log_file=outfile)
     log_and_print(f"  Max iterations of nonconvex optimizer: {max_iter_opt}", log_file=outfile)
     log_and_print(f"  Simulations per evaluation: M={M_simulations}\n", log_file=outfile)
+    if profile_timing:
+        log_and_print("  Timing instrumentation: ENABLED", log_file=outfile)
     
     # Initialize with GLOBAL mixture
     params = initialize_parameters_global_mixture(districts, df, K)
@@ -339,6 +389,8 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         total_log_lik: Sum of log-likelihoods across all districts
     """
     simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
+    profile_timing = bool(simulation_kwargs.get('profile_timing', False))
+    t_total_start = time.perf_counter()
     districts = sorted(observed_agg.keys())
     n_students_total = int(match_stats_df['Total Applicants'].sum())
     
@@ -356,6 +408,7 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
     
     for sim in range(M):
         log_and_print(f"      Simulation {sim+1}/{M}...", log_file=outfile)
+        t_sim_start = time.perf_counter()
         
         # Only vary the Mallows preference sampling, not the lottery
         np.random.seed(seed + sim)
@@ -373,6 +426,12 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
         for d_idx, district in enumerate(districts):
             agg_vec = agg['match_stats'][d_idx, :]
             simulated_samples[district].append(agg_vec)
+
+        if profile_timing:
+            log_and_print(
+                f"      [TIMING] simulation {sim+1}/{M}: {time.perf_counter() - t_sim_start:.3f}s",
+                log_file=outfile,
+            )
     
     mean_filled = total_filled / M
     # Get capacities in same order as all_schools
@@ -500,6 +559,12 @@ def compute_log_likelihood_gaussian_all_districts(params_global, observed_agg,
             log_lik = -mse * 100
         
         total_log_lik += log_lik
+
+    if profile_timing:
+        log_and_print(
+            f"  [TIMING] compute_log_likelihood_gaussian_all_districts total: {time.perf_counter() - t_total_start:.3f}s",
+            log_file=outfile,
+        )
     
     log_and_print(f"  Match stats log-likelihood: {total_log_lik:.2f}, Util penalty: {util_penalty:.2f}, Combined: {total_log_lik + util_penalty:.2f}", log_file=outfile)
     return total_log_lik + util_penalty
@@ -510,6 +575,8 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
                             max_iter_em=5, max_iter_opt=5, per_school_lottery=False, simulation_kwargs=None):
 
     simulation_kwargs = {} if simulation_kwargs is None else simulation_kwargs
+    profile_timing = bool(simulation_kwargs.get('profile_timing', False))
+    t_opt_start = time.perf_counter()
     K = len(params['global_phis'])
     best_agg_stats = None  # To capture utilization for the nudge
     eval_count = [0]
@@ -523,6 +590,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
         def objective_global_phi_k(phi):
             nonlocal best_agg_stats
             eval_count[0] += 1
+            t_eval_start = time.perf_counter()
             log_and_print(f"    [EM iter {iteration+1}/{max_iter_em}] phi[{k+1}/{K}] eval #{eval_count[0]}, trying phi={phi:.4f}", log_file=outfile)
             original_phi = params['global_phis'][k]
             params['global_phis'][k] = phi
@@ -536,6 +604,14 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
             last_log_like[0] = total_log_lik
             
             params['global_phis'][k] = original_phi
+            if profile_timing:
+                log_and_print(
+                    (
+                        f"    [TIMING] phi[{k+1}/{K}] eval #{eval_count[0]} "
+                        f"duration: {time.perf_counter() - t_eval_start:.3f}s"
+                    ),
+                    log_file=outfile,
+                )
             return -total_log_lik
         
         result = minimize_scalar(
@@ -567,6 +643,11 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
     
     # Average the accumulated results
     final_agg = {k: v / M for k, v in agg_accum.items()}
+    if profile_timing:
+        log_and_print(
+            f"  [TIMING] optimize_global_mixture total: {time.perf_counter() - t_opt_start:.3f}s",
+            log_file=outfile,
+        )
     
     return params, final_agg, last_log_like[0]
 

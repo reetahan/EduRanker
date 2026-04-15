@@ -15,6 +15,7 @@
 # A1_Oferta_Establecimientos_etapa_regular_2024_Admisión_2025
 
 # Packages
+library(ggplot2)
 library(readr)
 library(sf)
 library(dplyr)
@@ -52,10 +53,14 @@ resultados <- read_csv2(paste0(data_path,"/D1_Resultados_etapa_regular_2024_Admi
 resultados <- resultados %>%
   filter(cod_nivel == 9)
 
-# 4) Geo regional data Chile
-# Source: https://www.bcn.cl/siit/estadisticasterritoriales/estadisticas?categoria=demografico-y-censal-
+# 4) Geo regional & provinces data Chile
+# Source: https://www.bcn.cl/siit/mapas_vectoriales/index_html
 shp <- st_read(paste0(data_path,"/geo/Regiones/Regional.shp"), quiet = TRUE) %>%
   select(objectid, Region)
+
+shp_province <- st_read(paste0(data_path,"/geo/Provincias/Provincias.shp"), quiet = TRUE) %>%
+  select(objectid, Provincia)
+
 
 # 5) School capacity
 # Grade 9: 79.162
@@ -68,6 +73,8 @@ capacidad <- capacidad %>%
 ## (1): Individual-level preference list  --------------------------------------
 
 ### STEP 1: GEO DATA -----------------------------------------------------------
+
+####  Regions ------------------------------------------------------------------
 
 # Make polygons valid and keep only needed columns
 shp <- shp %>%
@@ -89,7 +96,7 @@ postulantes_sf <- postulantes %>%
 idx <- st_intersects(postulantes_sf, shp)
 region_idx <- sapply(idx, function(x) if (length(x) == 0) NA_integer_ else x[1])
 
-postulantes_sf$objectid <- shp$adm1_pcode[region_idx]
+postulantes_sf$objectid <- shp$objectid[region_idx]
 postulantes_sf$Region   <- shp$Region[region_idx]
 
 # Back to df format
@@ -104,14 +111,78 @@ postulantes_region_df <- postulantes_sf %>%
   #filter(cod_nivel == 0)
 #table(postulantes_region_df_kinder$Region)
 
+
+####  Provinces ----------------------------------------------------------------
+
+# Make polygons valid and keep only needed columns
+shp_province <- shp_province %>%
+  st_make_valid() %>%
+  select(objectid, Provincia)
+
+# keep all rows from postulantes
+# CRS in shp is not  4362, but 5360
+postulantes_province_region_df <- postulantes_region_df %>%
+  st_as_sf(
+    coords = c("lon_con_error", "lat_con_error"),
+    crs = 4326,
+    remove = FALSE,
+    na.fail = FALSE
+  ) %>%
+  st_transform(st_crs(shp_province))
+
+# Find intersection
+idx <- st_intersects(postulantes_province_region_df, shp_province)
+province_idx <- sapply(idx, function(x) if (length(x) == 0) NA_integer_ else x[1])
+
+postulantes_province_region_df$objectid <- shp_province$objectid[province_idx]
+postulantes_province_region_df$Provincia   <- shp_province$Provincia[province_idx]
+
+# Back to df format
+# Remark: For now, 155 NAs
+postulantes_province_region_df <- postulantes_province_region_df %>%
+  st_drop_geometry()
+
+# Validate
+
+# Check regions
+# ggplot(postulantes_province_region_df,
+#        aes(x = lon_con_error, y = lat_con_error, color = Region)) +
+#   geom_point(alpha = 0.4, size = 0.5) +
+#   coord_fixed() +
+#   theme_minimal()
+
+# # Check that provinces are correctly within the regions
+# postulantes_province_region_df %>%
+#   distinct(Provincia, Region) %>%
+#   count(Provincia) %>%
+#   filter(n > 1)
+# 
+# postulantes_province_region_df %>%
+#   distinct(Provincia, Region) %>%
+#   count(Provincia, name = "n_regions") %>%
+#   arrange(desc(n_regions))
+# 
+# postulantes_province_region_df %>%
+#   distinct(Region, Provincia) %>%
+#   count(Region, name = "n_provinces") %>%
+#   ggplot(aes(x = reorder(Region, n_provinces), y = n_provinces)) +
+#   geom_col() +
+#   coord_flip() +
+#   labs(
+#     x = "Region",
+#     y = "Number of Provinces",
+#     title = "Number of Provinces per Region (from your data)"
+#   ) +
+#   theme_minimal()
+
 ### STEP 2: Preference DATA ---------------------------------------------------
 
 # Subset both data sets
 # Data set with applicant info &
 # data set with preference info
 
-applicants_HS <- postulantes_region_df %>%
-  select(- cod_nivel, -lon_con_error, -lat_con_error, -calidad_georef)
+applicants_HS <- postulantes_province_region_df %>%
+  select(- cod_nivel)
 
 preferences_applicants_HS <- postulaciones %>%
   select(- cod_nivel, -orden_pie, -orden_alta_exigencia_transicion)
@@ -157,9 +228,12 @@ preferences_applicants_HS <- preferences_applicants_HS %>%
 # ... and so on
 # % not matched (where rbd_admitido == 0)
 
+
+### Regions --------------------------------------------------------------------
+
 # Remarks:
 # 14.504 are in total unmatched (in resultados it is 14.515 given that there
-# are still stundents with missing region)
+# are still students with missing region)
 
 student_outcomes <- preferences_applicants_HS %>%
   group_by(Region, mrun) %>%
@@ -185,6 +259,40 @@ final_matching_outcome <- student_outcomes %>%
     pct_unmatched = mean(is.na(matched_pref)) * 100,
     .groups = "drop"
   )
+
+
+### Provinces -----------------------------------------------------------------
+
+# Remarks:
+# 14.504 are in total unmatched (in resultados it is 14.515 given that there
+# are still stundents with missing region)
+
+student_outcomes_province <- preferences_applicants_HS %>%
+  group_by(Provincia, mrun) %>%
+  summarise(
+    matched_pref = if (any(matched == 1)) {
+      min(preferencia_postulante[matched == 1], na.rm = TRUE)
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  )
+
+final_matching_outcome_province <- student_outcomes_province %>%
+  group_by(Provincia) %>%
+  summarise(
+    n_students = n(),
+    !!!setNames(
+      lapply(1:21, function(k) {
+        rlang::expr(mean(matched_pref == !!k, na.rm = TRUE) * 100)
+      }),
+      paste0("pct_top", 1:21)
+    ),
+    pct_unmatched = mean(is.na(matched_pref)) * 100,
+    .groups = "drop"
+  )
+
+
 
 ## (3): School Capacity  -------------------------------------------------------
 
@@ -226,10 +334,14 @@ preferences_applicants_HS <- preferences_applicants_HS %>%
     female = es_mujer,
     priority_student = prioritario,
     high_performance_student = alto_rendimiento,
-    matched_first_round = matched
+    matched_first_round = matched,
+    province = Provincia,
+    quality_georef = calidad_georef,
+    lon = lon_con_error,
+    lat = lat_con_error
   ) %>%
   select(
-    mrun, Region, rbd, program_code, lottery, preference_number,
+    mrun, Region, province, lon, lat, quality_georef, rbd, program_code, lottery, preference_number,
     matched_first_round,
     female, priority_student, high_performance_student,
     priority_already_registered, priority_sibling,
@@ -263,7 +375,9 @@ school_capacity <- school_capacity %>%
 # Save as csv
 
 write_xlsx(preferences_applicants_HS, "DataGeneration/Chile/outputs/individual_level_preferences_and_result.xlsx")
+write_xlsx(preferences_applicants_HS, "DataGeneration/Chile/outputs/individual_level_preferences_and_result_province.xlsx")
 write_xlsx(final_matching_outcome, "DataGeneration/Chile/outputs/matching_outcome_by_region.xlsx")
+write_xlsx(final_matching_outcome_province, "DataGeneration/Chile/outputs/matching_outcome_by_province.xlsx")
 write_xlsx(school_capacity_by_region, "DataGeneration/Chile/outputs/school_capacity_by_region.xlsx")
 write_xlsx(school_capacity, "DataGeneration/Chile/outputs/school_capacity.xlsx")
 

@@ -134,7 +134,7 @@ def build_school_overrides(capacity_path):
                 group="academic_excellence",
                 fraction=round(excellence_seats / total, 6),
                 seats=excellence_seats,
-                description="High academic performance (30-85% seats, MINEDUC-selected schools)",
+                description="High academic performance (30-85\% seats, MINEDUC-selected schools)",
             )
 
         priority_seats = safe_int('priority_student_seats')

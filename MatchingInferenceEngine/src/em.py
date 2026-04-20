@@ -666,7 +666,7 @@ def optimize_global_mixture(params, observed_agg, df, match_stats_df,
         np.random.seed(seed + sim)
         log_and_print(f"  [EM iter {iteration+1}/{max_iter_em}] Final averaging sim {sim+1}/{M}...", log_file=outfile)
         agg_sim = run_single_simulation(params, df, match_stats_df, school_info_df, lottery_fixed, per_school_lottery=per_school_lottery,
-                                        sampling_n_jobs=sampling_n_jobs, outfile=outfile, executor=executor)
+                                        sampling_n_jobs=sampling_n_jobs, outfile=outfile, executor=executor, **simulation_kwargs)
         
         if agg_accum is None:
             agg_accum = {k: v.copy() for k, v in agg_sim.items()}

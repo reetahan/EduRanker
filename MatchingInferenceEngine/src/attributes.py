@@ -22,21 +22,9 @@ from priority import resolve_config
 SCHOOL_INDEPENDENT_GROUPS = {"SWD", "DIA", "disadvantaged", "high_performance", "special_needs", "academic_excellence"}
 SCHOOL_DEPENDENT_GROUPS   = {"borough", "continuing", "sibling", "working_parent", "returning_student", "feeder_school", "special_program"}
 
-# Per-district DIA (low-income/FRL) fraction for NYC.
-# Approximated from NYSED ENI data and FRL patterns; citywide ~0.72.
-NYC_DISTRICT_DIA_FRACTION = {
-    1:  0.68, 2:  0.38, 3:  0.62, 4:  0.78, 5:  0.80, 6:  0.75,
-    7:  0.88, 8:  0.85, 9:  0.90, 10: 0.82, 11: 0.78, 12: 0.87,
-    13: 0.78, 14: 0.82, 15: 0.65, 16: 0.90, 17: 0.85, 18: 0.72,
-    19: 0.82, 20: 0.42, 21: 0.58, 22: 0.62, 23: 0.85,
-    24: 0.72, 25: 0.48, 26: 0.38, 27: 0.78, 28: 0.68, 29: 0.80,
-    30: 0.68, 31: 0.60, 32: 0.82,
-}
-NYC_DIA_FRACTION_DEFAULT = 0.72
 
-# Citywide sibling prior for NYC. Lower than Chile (~15%) because
-# with 400+ schools a student's sibling is unlikely at any specific one.
-NYC_SIBLING_FRACTION = 0.08
+NYC_DIA_FRACTION_DEFAULT = 0.72
+NYC_SIBLING_FRACTION = 0.0
 
 
 def _get_fractions(config, region):
@@ -139,8 +127,7 @@ def sample_student_attributes(
 
         a = {
             'SWD':              draw('SWD') or draw('special_needs'),
-            'DIA':              bool(rng.random() < NYC_DISTRICT_DIA_FRACTION.get(
-                                    int(district), NYC_DIA_FRACTION_DEFAULT))
+            'DIA':              bool(rng.random() < NYC_DIA_FRACTION_DEFAULT)
                                 if priority_config.get('__meta__', {}).get('system') == 'NYC'
                                 else draw('DIA'),
             'disadvantaged':    draw('disadvantaged'),
@@ -200,85 +187,103 @@ def build_composite_rank_matrix(
     district_assignments,
 ):
     """
-    Builds the effective rank matrix used by the DA in place of raw lotteries.
-
-    Composite rank = reserve_bucket * 1e8 + priority_tier * 1e4 + lottery * 1e0
-
-    reserve_bucket:
-        0 = student is eligible for a reserve at this school (processed first)
-        1 = general seats
-
-    priority_tier: 1-indexed tier from config (lower = higher priority)
-    max_tier + 1 = general pool (all/all_nyc)
-
-    Args:
-        all_schools      array of program keys, shape (n_schools,)
-        student_attrs    list of attr dicts, length n_students
-        priority_config  unified priority config
-        school_lotteries np.ndarray shape (n_schools, n_students), values in [0,1)
-        district_to_region dict {district -> region}
-        district_assignments list of districts, length n_students
-
-    Returns:
-        np.ndarray shape (n_schools, n_students), dtype float64
+    Vectorized composite rank matrix for DA.
+    Composite rank = reserve_bucket * 1e8 + priority_tier * 1e4 + lottery
+    Lower = higher priority.
     """
     n_schools = len(all_schools)
     n_students = len(student_attrs)
+
+    # --- Extract school-independent attribute vectors (n_students,) ---
+    a_SWD    = np.array([a.get("SWD", False)            for a in student_attrs], dtype=bool)
+    a_DIA    = np.array([a.get("DIA", False)            for a in student_attrs], dtype=bool)
+    a_disadv = np.array([a.get("disadvantaged", False)  for a in student_attrs], dtype=bool)
+    a_sn     = np.array([a.get("special_needs", False)  for a in student_attrs], dtype=bool)
+    a_hp     = np.array([a.get("high_performance", False) for a in student_attrs], dtype=bool)
+    a_borough= np.array([a.get("borough", None)         for a in student_attrs], dtype=object)
+
+    # --- Inverted index for school-dependent attributes ---
+    # Maps prog_key -> sorted array of student indices that have priority there.
+    # Much faster than broadcasting equality over 124K students per school.
+    def _invert(attr_key):
+        idx = {}
+        for i, a in enumerate(student_attrs):
+            v = a.get(attr_key)
+            if v is not None:
+                idx.setdefault(v, []).append(i)
+        return {k: np.array(v) for k, v in idx.items()}
+
+    continuing_idx  = _invert("continuing_school")
+    sibling_idx     = _invert("sibling_school")
+    wp_idx          = _invert("working_parent_school")
+    returning_idx   = _invert("returning_school")
+
+    # Pre-fetch fallback tiers for Chile (region-uniform)
+    sample_district = str(district_assignments[0])
+    sample_region = district_to_region.get(sample_district, None)
+    fallback_tiers = _get_tiers(priority_config, sample_region)
+
+    school_overrides = priority_config.get("school_overrides", {})
     ranks = school_lotteries.copy().astype(np.float64)
 
     for s_idx, prog_key in enumerate(all_schools):
-        so = priority_config.get("school_overrides", {}).get(prog_key, {})
+        so = school_overrides.get(prog_key, {})
         prog_borough = so.get("borough", None)
-
-        # Get tiers: school-level for NYC, region-level for Chile
-        tiers = so.get("priority_tiers", None)
-        if not tiers:
-            # Fall back to region/system
-            # Use first student's district as proxy — tiers are region-uniform
-            sample_district = str(district_assignments[0])
-            region = district_to_region.get(sample_district, None)
-            tiers = _get_tiers(priority_config, region)
-
+        tiers = so.get("priority_tiers") or fallback_tiers
         reserves = so.get("reserves", {})
         max_tier = max((t["tier"] for t in tiers), default=1)
 
-        for st_idx, attrs in enumerate(student_attrs):
-            lottery = school_lotteries[s_idx, st_idx]
+        # --- Reserve bucket ---
+        reserve_bucket = np.ones(n_students, dtype=np.float64)
+        if "SWD" in reserves:
+            reserve_bucket[a_SWD] = 0.0
+        if "DIA" in reserves:
+            reserve_bucket[a_DIA & (reserve_bucket == 1)] = 0.0
+        if "disadvantaged" in reserves:
+            reserve_bucket[a_disadv & (reserve_bucket == 1)] = 0.0
+        if "special_needs" in reserves:
+            reserve_bucket[a_sn & (reserve_bucket == 1)] = 0.0
+        if "academic_excellence" in reserves:
+            reserve_bucket[a_hp & (reserve_bucket == 1)] = 0.0
 
-            # --- Reserve bucket ---
-            reserve_bucket = 1  # default: general seats
-            if "SWD" in reserves and attrs.get("SWD"):
-                reserve_bucket = 0
-            elif "DIA" in reserves and attrs.get("DIA"):
-                reserve_bucket = 0
-            elif "disadvantaged" in reserves and attrs.get("disadvantaged"):
-                reserve_bucket = 0
-            elif "special_needs" in reserves and attrs.get("special_needs"):
-                reserve_bucket = 0
-            elif "academic_excellence" in reserves and attrs.get("high_performance"):
-                reserve_bucket = 0
+        # --- Priority tier via inverted index ---
+        priority_tier = np.full(n_students, float(max_tier))
+        assigned = np.zeros(n_students, dtype=bool)
 
-            # --- Priority tier ---
-            priority_tier = max_tier  # default: general pool
-            for t in sorted(tiers, key=lambda x: x["tier"]):
-                group = t["group"]
-                if group in ("all", "all_nyc"):
-                    break
-                matched = False
-                if group == "borough":
-                    matched = (attrs.get("borough") == prog_borough)
-                elif group == "continuing":
-                    matched = (attrs.get("continuing_school") == prog_key)
-                elif group == "sibling":
-                    matched = (attrs.get("sibling_school") == prog_key)
-                elif group == "working_parent":
-                    matched = (attrs.get("working_parent_school") == prog_key)
-                elif group == "returning_student":
-                    matched = (attrs.get("returning_school") == prog_key)
-                if matched:
-                    priority_tier = t["tier"]
-                    break
+        for t in sorted(tiers, key=lambda x: x["tier"]):
+            group = t["group"]
+            if group in ("all", "all_nyc"):
+                break
 
-            ranks[s_idx, st_idx] = reserve_bucket * 1e8 + priority_tier * 1e4 + lottery
+            if group == "borough" and prog_borough is not None:
+                matched = (~assigned) & (a_borough == prog_borough)
+                priority_tier[matched] = t["tier"]
+                assigned[matched] = True
+            elif group == "continuing":
+                idxs = continuing_idx.get(prog_key)
+                if idxs is not None:
+                    mask = ~assigned[idxs]
+                    priority_tier[idxs[mask]] = t["tier"]
+                    assigned[idxs[mask]] = True
+            elif group == "sibling":
+                idxs = sibling_idx.get(prog_key)
+                if idxs is not None:
+                    mask = ~assigned[idxs]
+                    priority_tier[idxs[mask]] = t["tier"]
+                    assigned[idxs[mask]] = True
+            elif group == "working_parent":
+                idxs = wp_idx.get(prog_key)
+                if idxs is not None:
+                    mask = ~assigned[idxs]
+                    priority_tier[idxs[mask]] = t["tier"]
+                    assigned[idxs[mask]] = True
+            elif group == "returning_student":
+                idxs = returning_idx.get(prog_key)
+                if idxs is not None:
+                    mask = ~assigned[idxs]
+                    priority_tier[idxs[mask]] = t["tier"]
+                    assigned[idxs[mask]] = True
+
+        ranks[s_idx] = reserve_bucket * 1e8 + priority_tier * 1e4 + school_lotteries[s_idx]
 
     return ranks

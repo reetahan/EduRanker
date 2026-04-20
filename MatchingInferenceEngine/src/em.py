@@ -9,6 +9,7 @@ from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school, gale_shapley_per_school_numba_wrapper
 from mallows import  _sample_students_chunk
 from list_length import sample_truncated_normal_lengths
+from attributes import sample_student_attributes, build_composite_rank_matrix
 
 def run_single_simulation(
     params,
@@ -30,6 +31,9 @@ def run_single_simulation(
     per_school_lottery=False,
     return_rankings=False,
     profile_timing=False,
+    priority_config=None,
+    district_to_region=None,
+    district_to_borough=None
 ):
     t_total_start = time.perf_counter()
     timings = {}
@@ -163,20 +167,49 @@ def run_single_simulation(
     all_schools = df['School DBN'].unique()
     school_to_idx = {s: i for i, s in enumerate(all_schools)}
 
-    rankings_as_indices = [
-        np.array([school_to_idx[s] for s in r]) for r in all_rankings
-    ]
 
     capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     _mark_timing('prepare_matching_inputs', t_match_prep_start)
+
+    dbn_to_progs = {s: [s] for s in all_schools}  # 1:1 for Chile; expanded for NYC
+
+    def expand_ranking(ranking):
+        seen = set()
+        expanded = []
+        for dbn in ranking:
+            if dbn in seen or dbn not in school_to_idx:
+                continue
+            seen.add(dbn)
+            expanded.append(school_to_idx[dbn])
+        return np.array(expanded, dtype=np.int32)
+
+    rankings_as_indices = [expand_ranking(r) for r in all_rankings]
+
+    student_attrs = None
+    if priority_config is not None and per_school_lottery:
+        student_attrs = sample_student_attributes(
+            district_assignments=all_district_assignments,
+            all_schools=all_schools,
+            dbn_to_progs=dbn_to_progs,
+            priority_config=priority_config,
+            district_to_region=district_to_region or {str(d): str(d) for d in set(all_district_assignments)},
+            rng=rng,
+            district_to_borough=district_to_borough,
+        )
 
     t_matching_start = time.perf_counter()
     if per_school_lottery:
         n_students = len(rankings_as_indices)
         n_schools = len(all_schools)
         school_lotteries = rng.random((n_schools, n_students))
-        #matches_idx = gale_shapley_per_school(rankings_as_indices, school_lotteries, capacities)
+        if priority_config is not None and student_attrs is not None:
+            school_lotteries = build_composite_rank_matrix(
+                all_schools, student_attrs, priority_config,
+                school_lotteries,
+                district_to_region or {str(d): str(d) for d in set(all_district_assignments)},
+                all_district_assignments,
+            )
         matches_idx = gale_shapley_per_school_numba_wrapper(rankings_as_indices, school_lotteries, capacities)
     else:
         matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
@@ -229,7 +262,7 @@ def run_single_simulation(
 
 
     if return_rankings:
-        return agg, all_rankings, np.array(all_district_assignments)
+        return agg, all_rankings, rankings_as_indices, matches_idx, np.array(all_district_assignments), student_attrs
     return agg
 
 

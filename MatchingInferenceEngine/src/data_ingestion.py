@@ -169,4 +169,5 @@ def preprocess_chilean_data(indv_df, match_df, school_cap_reg_df, school_cap_df)
     )
     school_info_df = school_info_df[['School DBN', 'Capacity', 'Utilization']]
     
-    return df, new_match_stats_df, school_info_df
+    district_to_region = {str(r): str(r) for r in df['Residential District'].unique()}
+    return df, new_match_stats_df, school_info_df, district_to_region

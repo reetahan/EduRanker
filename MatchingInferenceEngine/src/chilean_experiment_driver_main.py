@@ -7,6 +7,8 @@ from em import EM_algorithm, run_single_simulation
 from data_ingestion import read_data, preprocess_chilean_data
 from analysis import log_and_print
 from config import EXP_OUT_FOLDER, CHILEAN_DATA_DIR
+from welfare import evaluate_simulation_output
+import json
 
 def run_chilean_data_experiment(
     outfile,
@@ -23,9 +25,22 @@ def run_chilean_data_experiment(
     school_cap_df = read_data(f"{CHILEAN_DATA_DIR}/school_capacity.xlsx")
     school_cap_reg_df = read_data(f"{CHILEAN_DATA_DIR}/school_capacity_by_region.xlsx")
 
-    df, match_stats_df, school_info_df = preprocess_chilean_data(
+    chile_config_path = f"{CHILEAN_DATA_DIR}/chile_priority_config.json"
+    priority_config = None
+    if os.path.exists(chile_config_path):
+        with open(chile_config_path) as f:
+            priority_config = json.load(f)
+        log_and_print(f"Loaded priority config: {chile_config_path}", outfile)
+
+    df, match_stats_df, school_info_df, district_to_region = preprocess_chilean_data(
         indv_df, match_df, school_cap_reg_df, school_cap_df
     )
+
+    simulation_kwargs = {
+        "profile_timing": profile_timing,
+        "priority_config": priority_config,
+        "district_to_region": district_to_region,
+    }
 
     log_and_print(f"df unique schools: {df['School DBN'].nunique()}", outfile)
     log_and_print(f"df unique districts: {df['Residential District'].nunique()}", outfile)
@@ -43,29 +58,47 @@ def run_chilean_data_experiment(
         max_iter_opt=max_iter_opt,
         seed=seed,
         per_school_lottery=True,
-        simulation_kwargs={"profile_timing": profile_timing},
+        simulation_kwargs=simulation_kwargs,
     )
 
     np.random.seed(seed)
-    agg, syn_rankings, syn_districts = run_single_simulation(
+    agg, syn_rankings, syn_rankings_idx, matches_idx, syn_districts, syn_attrs = run_single_simulation(
         params, df, match_stats_df, school_info_df,
         per_school_lottery=True, sampling_n_jobs=1,
         return_rankings=True,
-        profile_timing=profile_timing,
         outfile=outfile,
+        **simulation_kwargs,
     )
-    
+
     rows = []
     for i, (ranking, district) in enumerate(zip(syn_rankings, syn_districts)):
         row = {'student_id': i, 'district': district}
         for j, school in enumerate(ranking[:10]):
             row[f'choice_{j+1}'] = school
         rows.append(row)
-    
+
     syn_df = pd.DataFrame(rows)
     syn_path = outfile.replace('.txt', '_synthetic_rankings.csv')
     syn_df.to_csv(syn_path, index=False)
     log_and_print(f"Saved synthetic rankings ({len(syn_df)} students) to {syn_path}", log_file=outfile)
+
+    attr_df = pd.DataFrame(syn_attrs) if syn_attrs is not None else pd.DataFrame()
+    attr_df['district'] = list(syn_districts)
+
+    welfare_results = evaluate_simulation_output(
+        sim_output={
+            'rankings_as_indices': syn_rankings_idx,
+            'matches_idx': matches_idx,
+            'student_attributes': attr_df,
+        },
+        categories=['district'],
+        output_dir=outfile.replace('.txt', '_welfare'),
+    )
+    log_and_print(
+        f"Welfare: avg rank={welfare_results.rank_stats['avg_rank']:.3f}, "
+        f"pct_matched={welfare_results.rank_stats['pct_matched']:.1f}%",
+        log_file=outfile,
+    )
 
     log_and_print(f"===== RUN COMPLETE =====", log_file=outfile)
     log_and_print(f"Log-likelihood trajectory: {log_likelihoods}", log_file=outfile)

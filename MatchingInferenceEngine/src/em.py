@@ -8,7 +8,7 @@ from analysis import log_and_print
 from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school, gale_shapley_per_school_numba_wrapper
 from mallows import  _sample_students_chunk
-from list_length import sample_truncated_normal_lengths
+from list_length import sample_truncated_normal_lengths, sample_empirical_lengths
 from attributes import sample_student_attributes, build_composite_rank_matrix
 
 def run_single_simulation(
@@ -23,6 +23,7 @@ def run_single_simulation(
     list_length_std=2,
     list_length_min=1,
     list_length_max=12,
+    list_length_empirical_probs=None,
     return_student_data=False,
     outfile=None,
     sampling_n_jobs=32,
@@ -148,6 +149,10 @@ def run_single_simulation(
                 rng=rng
             )
 
+        elif list_length_mode == "empirical":
+            if list_length_empirical_probs is None:
+                raise ValueError("list_length_mode='empirical' requires list_length_empirical_probs")
+            list_lengths = sample_empirical_lengths(n_students_d, list_length_empirical_probs, rng)
         else:
             raise ValueError(f"Unknown list_length_mode: {list_length_mode}")
 

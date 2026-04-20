@@ -133,6 +133,7 @@ def sample_student_attributes(
             'disadvantaged':    draw('disadvantaged'),
             'high_performance': draw('high_performance'),
             'special_needs':    draw('special_needs'),
+            'female':           bool(rng.random() < fracs.get('female', 0.485)),
             'borough':          district_to_borough.get(str(district)) if district_to_borough else None,
             'continuing_school':     None,
             'sibling_school':        None,

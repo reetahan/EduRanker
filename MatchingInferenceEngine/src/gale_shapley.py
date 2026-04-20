@@ -72,6 +72,7 @@ def compute_aggregates(student_rankings, matches, district_assignments, schools_
     }
 
 def gale_shapley_per_school_numba_wrapper(student_rankings, school_lottery_numbers, school_capacities):
+    print(f"Invoked gale_shapley_per_school_numba_wrapper")
     max_len = max(len(r) for r in student_rankings)
     n = len(student_rankings)
     padded = np.full((n, max_len), -1, dtype=np.int32)

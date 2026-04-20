@@ -36,7 +36,13 @@ def run_chilean_data_experiment(
         indv_df, match_df, school_cap_reg_df, school_cap_df
     )
 
+    list_lengths = indv_df.groupby('mrun')['preference_number'].max().clip(upper=15)
+    counts = list_lengths.value_counts().sort_index()
+    empirical_probs = (counts / counts.sum()).to_dict()
+
     simulation_kwargs = {
+        "list_length_mode": "empirical",
+        "list_length_empirical_probs": empirical_probs,
         "profile_timing": profile_timing,
         "priority_config": priority_config,
         "district_to_region": district_to_region,
@@ -57,14 +63,14 @@ def run_chilean_data_experiment(
         sampling_n_jobs=sampling_n_jobs,
         max_iter_opt=max_iter_opt,
         seed=seed,
-        per_school_lottery=True,
+        per_school_lottery=False,
         simulation_kwargs=simulation_kwargs,
     )
 
     np.random.seed(seed)
     agg, syn_rankings, syn_rankings_idx, matches_idx, syn_districts, syn_attrs = run_single_simulation(
         params, df, match_stats_df, school_info_df,
-        per_school_lottery=True, sampling_n_jobs=1,
+        per_school_lottery=False, sampling_n_jobs=1,
         return_rankings=True,
         outfile=outfile,
         **simulation_kwargs,

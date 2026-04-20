@@ -64,6 +64,11 @@ def build_region_fractions(individual_path):
     region_overrides = {}
     for region, grp in student_df.groupby('Region'):
         fracs = {col: round(float(grp[col].mean()), 6) for col in PRIORITY_COLS}
+        female_frac = float(
+            df[df['Region'] == region]
+            .groupby('mrun')['female'].first()
+            .mean()
+        )
         region_overrides[region] = {
             "n_students": int(len(grp)),
             "priority_tiers": [
@@ -88,6 +93,7 @@ def build_region_fractions(individual_path):
                 "high_performance":   fracs['high_performance_student'],
                 "special_needs":      fracs['integration_program_status_existing'],
                 "already_registered": fracs['priority_already_registered'],
+                "female": female_frac,
             },
             "reserves": {},
         }

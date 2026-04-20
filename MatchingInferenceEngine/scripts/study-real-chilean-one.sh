@@ -2,7 +2,7 @@
 
 #SBATCH --job-name=eduranker_main_real_chilean                             
 #SBATCH --nodes=1                    
-#SBATCH --cpus-per-task=96          
+#SBATCH --cpus-per-task=64          
 #SBATCH --mem=32GB                     
 #SBATCH --time=40:10:00             
 #SBATCH --account=torch_pr_594_tandon_priority
@@ -13,11 +13,12 @@
 
 SEED=40
 K=6
-M=15
-MAX_ITER=20
+M=10
+MAX_ITER=10
 MAX_ITER_OPT=10
-N_JOBS=96
+N_JOBS=64
 PROFILE_TIMING=1
+
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 
 PROFILE_ARG=""

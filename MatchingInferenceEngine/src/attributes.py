@@ -63,49 +63,20 @@ def sample_student_attributes(
     q_continuing=0.55,
     district_to_borough=None,
 ):
-    """
-    Sample priority attributes for each student.
-
-    Args:
-        district_assignments  list/array of district labels, length n_students
-        all_schools           array of program keys (e.g. '01M292_prog1')
-        dbn_to_progs          dict {dbn -> [prog_key, ...]}
-        priority_config       unified priority config dict
-        district_to_region    dict {district -> region_name}
-        rng                   np.random.Generator
-        q_continuing          P(continuing student lists their own school)
-
-    Returns:
-        list of dicts, one per student:
-        {
-            'SWD':              bool,
-            'DIA':              bool,   # NYC
-            'disadvantaged':    bool,   # Chile
-            'high_performance': bool,
-            'special_needs':    bool,
-            'borough':          str | None,   # borough code if applicable
-            'continuing_school': str | None,  # prog_key where student is continuing
-            'sibling_school':    str | None,
-            'working_parent_school': str | None,
-            'returning_school':  str | None,
-        }
-    """
+   
     n_students = len(district_assignments)
     prog_key_list = list(all_schools)
     n_progs = len(prog_key_list)
 
-    # Precompute per-region fractions and tiers
     regions = set(district_to_region.values())
     region_fracs  = {r: _get_fractions(priority_config, r) for r in regions}
     region_dep_groups = {r: _school_dependent_tier_groups(priority_config, r) for r in regions}
 
-    # Build borough lookup: prog_key -> borough_code
     prog_borough = {}
     for pk in prog_key_list:
         so = priority_config.get("school_overrides", {}).get(pk, {})
         prog_borough[pk] = so.get("borough", None)
 
-    # Build continuing lookup: prog_key -> fraction_eligible (p)
     prog_continuing_p = {}
     for pk in prog_key_list:
         so = priority_config.get("school_overrides", {}).get(pk, {})
@@ -195,7 +166,6 @@ def build_composite_rank_matrix(
     n_schools = len(all_schools)
     n_students = len(student_attrs)
 
-    # --- Extract school-independent attribute vectors (n_students,) ---
     a_SWD    = np.array([a.get("SWD", False)            for a in student_attrs], dtype=bool)
     a_DIA    = np.array([a.get("DIA", False)            for a in student_attrs], dtype=bool)
     a_disadv = np.array([a.get("disadvantaged", False)  for a in student_attrs], dtype=bool)
@@ -203,9 +173,6 @@ def build_composite_rank_matrix(
     a_hp     = np.array([a.get("high_performance", False) for a in student_attrs], dtype=bool)
     a_borough= np.array([a.get("borough", None)         for a in student_attrs], dtype=object)
 
-    # --- Inverted index for school-dependent attributes ---
-    # Maps prog_key -> sorted array of student indices that have priority there.
-    # Much faster than broadcasting equality over 124K students per school.
     def _invert(attr_key):
         idx = {}
         for i, a in enumerate(student_attrs):
@@ -234,7 +201,6 @@ def build_composite_rank_matrix(
         reserves = so.get("reserves", {})
         max_tier = max((t["tier"] for t in tiers), default=1)
 
-        # --- Reserve bucket ---
         reserve_bucket = np.ones(n_students, dtype=np.float64)
         if "SWD" in reserves:
             reserve_bucket[a_SWD] = 0.0
@@ -247,7 +213,6 @@ def build_composite_rank_matrix(
         if "academic_excellence" in reserves:
             reserve_bucket[a_hp & (reserve_bucket == 1)] = 0.0
 
-        # --- Priority tier via inverted index ---
         priority_tier = np.full(n_students, float(max_tier))
         assigned = np.zeros(n_students, dtype=bool)
 

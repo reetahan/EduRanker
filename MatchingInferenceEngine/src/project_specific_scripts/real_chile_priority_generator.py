@@ -207,7 +207,6 @@ def main():
     indv_df = pd.read_excel(args.individual)
     region_overrides, total_students = build_region_fractions(indv_df)
     rbd_to_region = indv_df.groupby('rbd')['Region'].first().to_dict()
-    school_overrides = build_school_overrides(args.capacity, rbd_to_region)
     print(f"  Regions: {len(region_overrides)}, students: {total_students:,}")
 
     print("Building per-school reserves ...")

@@ -57,8 +57,7 @@ SYSTEM_DEFAULT_TIERS = [
 ]
 
 
-def build_region_fractions(individual_path):
-    df = pd.read_excel(individual_path)
+def build_region_fractions(df):
     student_df = df.groupby(['mrun', 'Region'])[PRIORITY_COLS].max().reset_index()
 
     region_overrides = {}
@@ -102,13 +101,14 @@ def build_region_fractions(individual_path):
     return region_overrides, total_students
 
 
-def build_school_overrides(capacity_path):
+def build_school_overrides(capacity_path, rbd_to_region):
     df = pd.read_excel(capacity_path)
     school_overrides = {}
 
     for _, row in df.iterrows():
         try:
             rbd = int(float(row['rbd']))
+            region = rbd_to_region.get(int(rbd), None)
             program_code = str(int(float(row['program_code'])))
             total = float(row.get('total_admission_seats', 0) or 0)
         except (ValueError, TypeError):
@@ -158,6 +158,7 @@ def build_school_overrides(capacity_path):
                 "rbd": rbd,
                 "program_code": program_code,
                 "total_admission_seats": int(total),
+                "region": region,
                 "regular_seats": safe_int('regular_seats'),
                 "reserves": reserves,
             }
@@ -203,11 +204,14 @@ def main():
     args = parser.parse_args()
 
     print("Building per-region student fractions ...")
-    region_overrides, total_students = build_region_fractions(args.individual)
+    indv_df = pd.read_excel(args.individual)
+    region_overrides, total_students = build_region_fractions(indv_df)
+    rbd_to_region = indv_df.groupby('rbd')['Region'].first().to_dict()
+    school_overrides = build_school_overrides(args.capacity, rbd_to_region)
     print(f"  Regions: {len(region_overrides)}, students: {total_students:,}")
 
     print("Building per-school reserves ...")
-    school_overrides = build_school_overrides(args.capacity)
+    school_overrides = build_school_overrides(args.capacity, rbd_to_region)
     print(f"  Schools with reserves: {len(school_overrides)}")
     print(f"    disadvantaged:       {sum(1 for v in school_overrides.values() if 'disadvantaged' in v['reserves'])}")
     print(f"    academic_excellence: {sum(1 for v in school_overrides.values() if 'academic_excellence' in v['reserves'])}")

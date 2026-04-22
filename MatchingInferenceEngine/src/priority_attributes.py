@@ -6,7 +6,16 @@ SCHOOL_INDEPENDENT_GROUPS = {"SWD", "DIA", "disadvantaged", "high_performance", 
 SCHOOL_DEPENDENT_GROUPS   = {"borough", "continuing", "sibling", "working_parent", "returning_student", "feeder_school", "special_program"}
 
 
-NYC_DIA_FRACTION_DEFAULT = 0.72
+NYC_DIA_FRACTION_DEFAULT = 0.773 
+NYC_DISTRICT_DIA_FRACTION = {
+    1:  0.661, 2:  0.562, 3:  0.527, 4:  0.845, 5:  0.823,
+    6:  0.845, 7:  0.941, 8:  0.872, 9:  0.953, 10: 0.849,
+    11: 0.842, 12: 0.939, 13: 0.599, 14: 0.730, 15: 0.552,
+    16: 0.868, 17: 0.807, 18: 0.823, 19: 0.902, 20: 0.782,
+    21: 0.768, 22: 0.731, 23: 0.917, 24: 0.802, 25: 0.707,
+    26: 0.608, 27: 0.795, 28: 0.705, 29: 0.756, 30: 0.698,
+    31: 0.633, 32: 0.888,
+}
 NYC_SIBLING_FRACTION = 0.0
 
 
@@ -88,12 +97,10 @@ def sample_student_attributes(
             return bool(rng.random() < p) if p else False
 
         a = {
-            'SWD':              draw('SWD') or draw('special_needs'),
-            'DIA':              
-            bool(rng.random() < NYC_DIA_FRACTION_DEFAULT.get(
-                                            int(district), NYC_DIA_FRACTION_DEFAULT))
-                                if priority_config.get('__meta__', {}).get('system') == 'NYC'
-                                else draw('DIA'),
+            'SWD':              draw('SWD') or draw('special_needs'),         
+            'DIA':              bool(rng.random() < NYC_DISTRICT_DIA_FRACTION.get(int(district), NYC_DIA_FRACTION_DEFAULT))
+                        if priority_config.get('__meta__', {}).get('system') == 'NYC'
+                        else draw('DIA'),
             'disadvantaged':    draw('disadvantaged'),
             'high_performance': draw('high_performance'),
             'special_needs':    draw('special_needs'),
@@ -188,10 +195,9 @@ def build_composite_rank_matrix(
     wp_idx          = _invert("working_parent_school")
     returning_idx   = _invert("returning_school")
 
-    # Pre-fetch fallback tiers for Chile (region-uniform)
     sample_district = str(district_assignments[0])
     sample_region = district_to_region.get(sample_district, None)
-    fallback_tiers = _get_tiers(priority_config, sample_region)
+    default_fallback_tiers = _get_tiers(priority_config, sample_region)
 
     school_overrides = priority_config.get("school_overrides", {})
     ranks = school_lotteries.copy().astype(np.float64)
@@ -199,6 +205,8 @@ def build_composite_rank_matrix(
     for s_idx, prog_key in enumerate(all_schools):
         so = school_overrides.get(prog_key, {})
         prog_borough = so.get("borough", None)
+        school_region = so.get("region", None)
+        fallback_tiers = _get_tiers(priority_config, school_region) if school_region else default_fallback_tiers
         tiers = so.get("priority_tiers") or fallback_tiers
         reserves = so.get("reserves", {})
         max_tier = max((t["tier"] for t in tiers), default=1)

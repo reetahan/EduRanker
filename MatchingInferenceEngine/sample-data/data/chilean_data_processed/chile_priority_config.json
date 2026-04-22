@@ -2,8 +2,6 @@
   "__meta__": {
     "system": "Chile SAE",
     "id_format": "rbd_program_code",
-    "legal_basis": "Ley 20.845 + Decreto 152",
-    "reference": "Correa, Epstein, Escobar (2019)",
     "total_students": 124492,
     "n_regions": 16,
     "granularity": {

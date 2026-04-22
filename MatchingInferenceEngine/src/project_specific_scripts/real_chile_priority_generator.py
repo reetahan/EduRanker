@@ -28,7 +28,7 @@ import json
 import pandas as pd
 import numpy as np
 
-from src.project_specific_scripts.priority import make_tier, make_reserve, validate_config
+from src.project_specific_scripts.config_priority_generator import make_tier, make_reserve, validate_config
 
 
 PRIORITY_COLS = [

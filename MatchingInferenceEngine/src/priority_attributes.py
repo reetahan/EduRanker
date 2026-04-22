@@ -30,6 +30,12 @@ def _get_tiers(config, region):
     )
 
 
+def _get_tier_fraction(tiers, group):
+    for t in tiers:
+        if t['group'] == group:
+            return t.get('fraction_eligible') or 0.0
+    return 0.0
+
 def _school_dependent_tier_groups(config, region):
     """Return set of school-dependent groups present in this region's tiers."""
     tiers = _get_tiers(config, region)
@@ -69,9 +75,11 @@ def sample_student_attributes(
             prog_continuing_p[pk] = cont.get("fraction_eligible") or 0.0
 
     attrs = []
+    region_tiers_map = {r: _get_tiers(priority_config, r) for r in regions}
     for i in range(n_students):
         district = district_assignments[i]
         region = district_to_region.get(str(district), None)
+        region_tiers = region_tiers_map.get(region, [])
         fracs = region_fracs.get(region, {}) if region else {}
         dep_groups = region_dep_groups.get(region, set()) if region else set()
 
@@ -81,7 +89,9 @@ def sample_student_attributes(
 
         a = {
             'SWD':              draw('SWD') or draw('special_needs'),
-            'DIA':              bool(rng.random() < NYC_DIA_FRACTION_DEFAULT)
+            'DIA':              
+            bool(rng.random() < NYC_DIA_FRACTION_DEFAULT.get(
+                                            int(district), NYC_DIA_FRACTION_DEFAULT))
                                 if priority_config.get('__meta__', {}).get('system') == 'NYC'
                                 else draw('DIA'),
             'disadvantaged':    draw('disadvantaged'),
@@ -107,22 +117,31 @@ def sample_student_attributes(
                 if rng.random() < q_continuing:
                     a['continuing_school'] = prog_key_list[chosen_idx]
 
+        
         if "sibling" in dep_groups:
-            p_sib = NYC_SIBLING_FRACTION if is_nyc else fracs.get('priority_sibling', 0.0)
+            
+            p_sib = NYC_SIBLING_FRACTION if is_nyc else next(
+                (t.get('fraction_eligible') or 0.0 for t in region_tiers if t['group'] == 'sibling'), 0.0
+            )
             if p_sib > 0 and rng.random() < p_sib:
                 dbn = rng.choice(list(dbn_to_progs.keys()))
                 progs = dbn_to_progs[dbn]
                 a['sibling_school'] = rng.choice(progs)
 
+
         if "working_parent" in dep_groups:
-            p_wp = fracs.get('priority_parent_civil_servant', 0.0)
+            p_wp =  next(
+                (t.get('fraction_eligible') or 0.0 for t in region_tiers if t['group'] == 'working_parent'), 0.0
+            )
             if p_wp > 0 and rng.random() < p_wp:
                 dbn = rng.choice(list(dbn_to_progs.keys()))
                 progs = dbn_to_progs[dbn]
                 a['working_parent_school'] = rng.choice(progs)
 
         if "returning_student" in dep_groups:
-            p_ret = fracs.get('priority_ex_student', 0.0)
+            p_ret = next(
+                (t.get('fraction_eligible') or 0.0 for t in region_tiers if t['group'] == 'returning_student'), 0.0
+            )
             if p_ret > 0 and rng.random() < p_ret:
                 dbn = rng.choice(list(dbn_to_progs.keys()))
                 progs = dbn_to_progs[dbn]

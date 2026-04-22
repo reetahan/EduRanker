@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from config import EXP_OUT_FOLDER
+from src.file_config import EXP_OUT_FOLDER
 
 def plot_capacity_and_sigmas(real_schools, real_caps, real_sigmas):
     ranks = {}

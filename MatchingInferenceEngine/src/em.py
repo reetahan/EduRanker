@@ -9,7 +9,7 @@ from data_ingestion import extract_observed_aggregates
 from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school, gale_shapley_per_school_numba_wrapper
 from mallows import  _sample_students_chunk
 from list_length import sample_truncated_normal_lengths, sample_empirical_lengths
-from attributes import sample_student_attributes, build_composite_rank_matrix
+from src.priority_attributes import sample_student_attributes, build_composite_rank_matrix
 
 def run_single_simulation(
     params,
@@ -191,7 +191,7 @@ def run_single_simulation(
     rankings_as_indices = [expand_ranking(r) for r in all_rankings]
 
     student_attrs = None
-    if priority_config is not None and per_school_lottery:
+    if priority_config is not None:
         student_attrs = sample_student_attributes(
             district_assignments=all_district_assignments,
             all_schools=all_schools,
@@ -203,20 +203,23 @@ def run_single_simulation(
         )
 
     t_matching_start = time.perf_counter()
+    n_students = len(rankings_as_indices)
+    n_schools = len(all_schools)
+
     if per_school_lottery:
-        n_students = len(rankings_as_indices)
-        n_schools = len(all_schools)
         school_lotteries = rng.random((n_schools, n_students))
-        if priority_config is not None and student_attrs is not None:
-            school_lotteries = build_composite_rank_matrix(
-                all_schools, student_attrs, priority_config,
-                school_lotteries,
-                district_to_region or {str(d): str(d) for d in set(all_district_assignments)},
-                all_district_assignments,
-            )
-        matches_idx = gale_shapley_per_school_numba_wrapper(rankings_as_indices, school_lotteries, capacities)
     else:
-        matches_idx = gale_shapley(rankings_as_indices, lottery_global, capacities)
+        lottery_1d = np.argsort(lottery_global).astype(np.float64) / n_students
+        school_lotteries = np.tile(lottery_1d, (n_schools, 1))
+
+    if priority_config is not None and student_attrs is not None:
+        _d2r = district_to_region or {str(d): str(d) for d in set(all_district_assignments)}
+        school_lotteries = build_composite_rank_matrix(
+            all_schools, student_attrs, priority_config,
+            school_lotteries, _d2r, all_district_assignments,
+        )
+
+    matches_idx = gale_shapley_per_school_numba_wrapper(rankings_as_indices, school_lotteries, capacities)
     matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
     _mark_timing('matching', t_matching_start)
 

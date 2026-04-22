@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from data_ingestion import read_data, preprocess_data
 from analysis import log_and_print
-from config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
+from src.file_config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
 
 simulation_kwargs = {
     "list_length_mode": "gaussian",

@@ -5,6 +5,7 @@
 *.csv
 *.pdf
 *.txt
+*.json
 *.png
 *.out
 *.xlsx

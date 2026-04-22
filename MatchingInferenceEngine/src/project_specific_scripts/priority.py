@@ -1,24 +1,4 @@
-"""
-priority_config_schema.py - Unified priority config schema for NYC and Chile generators.
 
-Schema structure:
-  __meta__          system metadata and granularity declarations
-  system_defaults   fallback tiers/reserves/fractions
-  region_overrides  per-region tiers/reserves/fractions (overrides system_defaults)
-  school_overrides  per-school reserves only (merged with region/system; school wins)
-
-Resolution order:
-  priority_tiers               region -> system
-  reserves                     school MERGE region MERGE system (school wins)
-  student_attribute_fractions  region -> system
-
-TierObject fields:
-  tier, group, description, fraction_eligible, seat_cap_fraction,
-  school_dependent, borough_code, special_type
-
-ReserveObject fields:
-  group, fraction, seats, description, legal_fraction
-"""
 
 
 def make_tier(tier, group, description, fraction_eligible,

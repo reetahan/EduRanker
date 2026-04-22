@@ -1,23 +1,4 @@
-"""
-real_nyc_priority_generator.py
 
-Inputs:
-  DATA4  HS directory (programs, methods, seat splits, priority columns, DIA)
-  DATA1  Admissions results (seats available per school)
-  DATA2  Enrollment (grade 9 students per school)
-  DATA3  Match outcomes by district (total citywide applicants)
-
-Continuing fraction p = enrolled_grade9 / total_citywide_applicants.
-Borough fraction_eligible=null — resolved at runtime from student district vs school borough.
-
-Usage:
-    python real_nyc_priority_generator.py \
-        --input  DATA4_fall-2025---hs-directory-data.xlsx \
-        --data1  DATA1_fall-2024-admissions-72-suppressed.xlsx \
-        --data2  DATA2_fall-2024-admissions_part-ii_suppressed.xlsx \
-        --data3  DATA3_fall-2024-high-school-offer-results-website-1.xlsx \
-        --output nyc_priority_config.json
-"""
 
 import argparse
 import json
@@ -25,7 +6,7 @@ import re
 import pandas as pd
 import numpy as np
 
-from priority import make_tier, make_reserve, validate_config
+from src.project_specific_scripts.priority import make_tier, make_reserve, validate_config
 
 
 BOROUGH_PRIORITY_STRINGS_INV = {

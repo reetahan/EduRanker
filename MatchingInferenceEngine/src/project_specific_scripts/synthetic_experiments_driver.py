@@ -7,7 +7,7 @@ from datetime import datetime
 from analysis import log_and_print
 from data_ingestion import read_data, preprocess_data
 from em import EM_algorithm, run_single_simulation
-from synthetic_data_generator import create_synthetic_experiment, extract_realistic_params_from_real_data
+from src.project_specific_scripts.synthetic_data_generator import create_synthetic_experiment, extract_realistic_params_from_real_data
 from config import EXP_OUT_FOLDER, DATA_GENERATION_SEED, RAW_DATA_DIR, POLISHED_DATA_DIR
 
 def run_synthetic_experiment_3_MoM_no_utilization(outfile=None):

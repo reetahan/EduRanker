@@ -1,22 +1,5 @@
-"""
-attributes.py
-
-Samples per-student priority attributes given a priority config and student districts.
-
-For school-independent attributes (SWD, DIA/disadvantaged, high_performance):
-    drawn once per student from regional/system fractions.
-
-For school-dependent attributes (borough, sibling, continuing, working_parent,
-returning_student, feeder_school, special_program):
-    drawn once per student, yielding a single school key (or None) where
-    the attribute applies. At DA time, the attribute is active only when
-    the student proposes to that specific school.
-
-Output: list of dicts, one per student, length = n_students.
-"""
 
 import numpy as np
-from priority import resolve_config
 
 
 SCHOOL_INDEPENDENT_GROUPS = {"SWD", "DIA", "disadvantaged", "high_performance", "special_needs", "academic_excellence"}

@@ -238,6 +238,36 @@ def boston_algorithm(student_rankings, student_lottery_numbers, school_capacitie
                     school_assignments[school].append(student)
                     matches[student] = school
 
+def boston_algorithm_per_school(student_rankings, school_lottery_numbers, school_capacities):
+    n_students = len(student_rankings)
+    
+    matches = np.full(n_students, -1)
+    school_assignments = [[] for _ in school_capacities]
+    
+    max_rank_length = max(len(ranking) for ranking in student_rankings)
+    
+    for rank in range(max_rank_length):
+        applications = [[] for _ in school_capacities]
+        
+        for student in range(n_students):
+            if matches[student] == -1 and rank < len(student_rankings[student]):
+                school = student_rankings[student][rank]
+                applications[school].append(student)
+        
+        for school, capacity in enumerate(school_capacities):
+            remaining_seats = capacity - len(school_assignments[school])
+            
+            if remaining_seats > 0:
+                priorities = school_lottery_numbers[school]
+                accepted = sorted(applications[school],
+                                  key=lambda s: priorities[s])[:remaining_seats]
+                
+                school_assignments[school].extend(accepted)
+                for student in accepted:
+                    matches[student] = school
+    
+    return matches
+
 def top_trading_cycles(student_rankings, school_rankings, school_capacities):
     n_students = len(student_rankings)
     n_schools = len(school_capacities)

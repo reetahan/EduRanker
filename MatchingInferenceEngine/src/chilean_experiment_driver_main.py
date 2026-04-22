@@ -63,7 +63,7 @@ def run_chilean_data_experiment(
         sampling_n_jobs=sampling_n_jobs,
         max_iter_opt=max_iter_opt,
         seed=seed,
-        per_school_lottery=False,
+        per_school_lottery=True,
         simulation_kwargs=simulation_kwargs,
     )
 
@@ -97,7 +97,7 @@ def run_chilean_data_experiment(
             'matches_idx': matches_idx,
             'student_attributes': attr_df,
         },
-        categories=['district'],
+        categories=['district', 'female'],
         output_dir=outfile.replace('.txt', '_welfare'),
     )
     log_and_print(

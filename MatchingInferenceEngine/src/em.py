@@ -148,7 +148,6 @@ def run_single_simulation(
                 max_len=max_len_here,
                 rng=rng
             )
-
         elif list_length_mode == "empirical":
             if list_length_empirical_probs is None:
                 raise ValueError("list_length_mode='empirical' requires list_length_empirical_probs")
@@ -177,7 +176,7 @@ def run_single_simulation(
     capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
     _mark_timing('prepare_matching_inputs', t_match_prep_start)
 
-    dbn_to_progs = {s: [s] for s in all_schools}  # 1:1 for Chile; expanded for NYC
+    dbn_to_progs = {s: [s] for s in all_schools} 
 
     def expand_ranking(ranking):
         seen = set()

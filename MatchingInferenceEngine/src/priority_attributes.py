@@ -39,12 +39,6 @@ def _get_tiers(config, region):
     )
 
 
-def _get_tier_fraction(tiers, group):
-    for t in tiers:
-        if t['group'] == group:
-            return t.get('fraction_eligible') or 0.0
-    return 0.0
-
 def _school_dependent_tier_groups(config, region):
     """Return set of school-dependent groups present in this region's tiers."""
     tiers = _get_tiers(config, region)
@@ -195,6 +189,7 @@ def build_composite_rank_matrix(
     wp_idx          = _invert("working_parent_school")
     returning_idx   = _invert("returning_school")
 
+    # Used as fallback if school/region unspecified
     sample_district = str(district_assignments[0])
     sample_region = district_to_region.get(sample_district, None)
     default_fallback_tiers = _get_tiers(priority_config, sample_region)

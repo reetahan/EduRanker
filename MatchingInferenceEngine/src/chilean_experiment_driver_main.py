@@ -5,8 +5,8 @@ import pandas as pd
 from datetime import datetime
 from em import EM_algorithm, run_single_simulation
 from data_ingestion import read_data, preprocess_chilean_data
-from analysis import log_and_print
-from src.file_config import EXP_OUT_FOLDER, CHILEAN_DATA_DIR
+from util import log_and_print
+from file_config import EXP_OUT_FOLDER, CHILEAN_DATA_DIR
 from welfare import evaluate_simulation_output
 import json
 

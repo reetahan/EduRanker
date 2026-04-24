@@ -1,7 +1,7 @@
 
 import pandas as pd
 import numpy as np
-from analysis import log_and_print
+from util import log_and_print
 
 def read_data(file_path, sheet=0):
     """
@@ -86,8 +86,17 @@ def preprocess_data(df, match_stats_df, school_info_df, addtl_school_info_df):
     
     avg_list_length = df['Total Applicants by Residential District'].sum() / match_stats_df['Total Applicants'].sum()
     log_and_print(f"Average list length from data: {avg_list_length:.2f}")
+
+    district_to_borough = {
+        str(d): b for d, b in
+        [(d,'M') for d in range(1,7)] +
+        [(d,'X') for d in range(7,13)] +
+        [(d,'K') for d in range(13,24)] +
+        [(d,'Q') for d in range(24,31)] +
+        [(31,'R'), (32,'K')]
+    }
      
-    return df, match_stats_df, school_info_df
+    return df, match_stats_df, school_info_df, district_to_borough
 
 def preprocess_chilean_data(indv_df, match_df, school_cap_reg_df, school_cap_df):
 

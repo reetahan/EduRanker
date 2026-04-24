@@ -6,6 +6,7 @@
 *.pdf
 *.txt
 *.json
+*.pkl
 *.png
 *.out
 *.xlsx

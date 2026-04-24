@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from analysis import log_and_print
+from util import log_and_print
 
 def _build_numba_prob_cache(max_positions, phi):
     """

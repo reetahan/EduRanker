@@ -2,21 +2,15 @@ import argparse
 import os
 from datetime import datetime
 from em import EM_algorithm, run_single_simulation
-from welfare import compute_welfare_queries
+from welfare import evaluate_simulation_output
+import json
 import pandas as pd
 import numpy as np
+import pickle
 from data_ingestion import read_data, preprocess_data
-from analysis import log_and_print
-from src.file_config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
+from util import log_and_print
+from file_config import EXP_OUT_FOLDER, RAW_DATA_DIR, POLISHED_DATA_DIR
 
-simulation_kwargs = {
-    "list_length_mode": "gaussian",
-    "list_length_mean": 10,
-    "list_length_std": 2,
-    "list_length_min": 1,
-    "list_length_max": 12,
-    "return_student_data": False
-}
 
 def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
              sampling_n_jobs=32, max_iter_opt=5, seed=40, n_welfare_sims=5,
@@ -38,9 +32,29 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
         sheet='School'
     )
 
-    df, match_stats_df, school_info_df = preprocess_data(
+    nyc_config_path = f"{POLISHED_DATA_DIR}/nyc_priority_config.json"
+    priority_config = None
+    if os.path.exists(nyc_config_path):
+        with open(nyc_config_path) as f:
+            priority_config = json.load(f)
+        log_and_print(f"Loaded NYC priority config", outfile)
+    
+
+    df, match_stats_df, school_info_df, district_to_borough = preprocess_data(
         df, match_stats_df, school_info_df, addtl_school_info_df
     )
+
+    simulation_kwargs = {
+            "list_length_mode": "gaussian",
+            "list_length_mean": 7,
+            "list_length_std": 2,
+            "list_length_min": 1,
+            "list_length_max": 15,
+            "return_student_data": False,
+            "profile_timing": profile_timing,
+            "priority_config": priority_config,
+            "district_to_borough" : district_to_borough
+        }
 
     log_and_print(f"df unique schools: {df['School DBN'].nunique()}", outfile)
     log_and_print(f"school_info_df rows: {len(school_info_df)}", outfile)
@@ -63,70 +77,52 @@ def run_real(outfile, df_filepath=None, max_iter=5, M=5, K=12,
         simulation_kwargs=run_simulation_kwargs
     )
 
-    welfare = run_welfare_analysis(
-        params=params,
-        df=df,
-        match_stats_df=match_stats_df,
-        school_info_df=school_info_df,
-        n_welfare_sims=n_welfare_sims,
+    np.random.seed(seed)
+    agg, syn_rankings, syn_rankings_idx, matches_idx, syn_districts, syn_attrs = run_single_simulation(
+        params, df, match_stats_df, school_info_df,
+        per_school_lottery=False, sampling_n_jobs=1,
+        return_rankings=True, lottery_global=lottery,
         outfile=outfile,
-        sampling_n_jobs=sampling_n_jobs,
-        seed=seed,
-        profile_timing=profile_timing,
+        **simulation_kwargs,
     )
 
-    log_and_print("===== RUN COMPLETE =====", log_file=outfile)
-    log_and_print(f"Log-likelihood trajectory: {log_likelihoods}", log_file=outfile)
+    params_path = outfile.replace('.txt', '_params.pkl')
+    with open(params_path, 'wb') as f:
+        pickle.dump(params, f)
+    log_and_print(f"Saved params to {params_path}", log_file=outfile)
+
+    rows = []
+    for i, (ranking, district) in enumerate(zip(syn_rankings, syn_districts)):
+        row = {'student_id': i, 'district': district}
+        for j, school in enumerate(ranking[:10]):
+            row[f'choice_{j+1}'] = school
+        rows.append(row)
+
+    syn_df = pd.DataFrame(rows)
+    syn_path = outfile.replace('.txt', '_synthetic_rankings.csv')
+    syn_df.to_csv(syn_path, index=False)
+    log_and_print(f"Saved synthetic rankings ({len(syn_df)} students) to {syn_path}", log_file=outfile)
+
+    attr_df = pd.DataFrame(syn_attrs) if syn_attrs is not None else pd.DataFrame()
+    attr_df['district'] = list(syn_districts)
+
+    welfare_results = evaluate_simulation_output(
+        sim_output={
+            'rankings_as_indices': syn_rankings_idx,
+            'matches_idx': matches_idx,
+            'student_attributes': attr_df,
+        },
+        categories=['district'],
+        output_dir=outfile.replace('.txt', '_welfare'),
+    )
     log_and_print(
-        f"P(unmatched | list_length): {welfare['p_unmatched_given_list_length']}",
-        log_file=outfile
+        f"Welfare: avg rank={welfare_results.rank_stats['avg_rank']:.3f}, "
+        f"pct_matched={welfare_results.rank_stats['pct_matched']:.1f}%",
+        log_file=outfile,
     )
 
-    return params, lottery, log_likelihoods, final_agg, welfare
-
-def run_welfare_analysis(
-    params,
-    df,
-    match_stats_df,
-    school_info_df,
-    n_welfare_sims=50,
-    outfile=None,
-    sampling_n_jobs=32,
-    seed=40,
-    profile_timing=False,
-):
-    rng = np.random.default_rng(seed)
-    total_students = int(match_stats_df['Total Applicants'].sum())
-
-    all_student_dfs = []
-
-    for sim in range(n_welfare_sims):
-        lottery = rng.permutation(total_students)
-
-        _, student_df = run_single_simulation(
-            params=params,
-            df=df,
-            match_stats_df=match_stats_df,
-            school_info_df=school_info_df,
-            lottery_global=lottery,
-            list_length_mode="gaussian",
-            list_length_mean=simulation_kwargs["list_length_mean"],
-            list_length_std=simulation_kwargs["list_length_std"],
-            list_length_min=simulation_kwargs["list_length_min"],
-            list_length_max=simulation_kwargs["list_length_max"],
-            return_student_data=True,
-            outfile=outfile,
-            sampling_n_jobs=sampling_n_jobs,
-            profile_timing=profile_timing,
-        )
-
-        student_df["sim"] = sim
-        all_student_dfs.append(student_df)
-
-    pooled_student_df = pd.concat(all_student_dfs, ignore_index=True)
-
-    welfare = compute_welfare_queries(pooled_student_df)
-    return welfare
+    log_and_print(f"===== RUN COMPLETE =====", log_file=outfile)
+    log_and_print(f"Log-likelihood trajectory: {log_likelihoods}", log_file=outfile)
 
 
 if __name__ == "__main__":

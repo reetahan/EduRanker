@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from analysis import log_and_print
+from util import log_and_print
 from numba import njit
 
 def compute_aggregates(student_rankings, matches, district_assignments, schools_list):

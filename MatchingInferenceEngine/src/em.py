@@ -4,12 +4,184 @@ from scipy.optimize import minimize_scalar
 import copy
 import time
 from concurrent.futures import ProcessPoolExecutor
-from analysis import log_and_print
+from util import log_and_print
 from data_ingestion import extract_observed_aggregates
-from gale_shapley import gale_shapley, compute_aggregates, gale_shapley_per_school, gale_shapley_per_school_numba_wrapper
+from gale_shapley import compute_aggregates, gale_shapley_per_school_numba_wrapper
 from mallows import  _sample_students_chunk
 from list_length import sample_truncated_normal_lengths, sample_empirical_lengths
-from src.priority_attributes import sample_student_attributes, build_composite_rank_matrix
+from priority_attributes import sample_student_attributes, build_composite_rank_matrix
+
+
+def sample_rankings(
+    params,
+    match_stats_df,
+    sampling_n_jobs=32,
+    sampling_chunk_size=2000,
+    executor=None,
+    list_length_max=10
+):
+    """
+    Sample Mallows preference rankings for all students across all districts.
+    Returns raw index-based rankings (before list length truncation),
+    district assignments, and the rng used.
+    """
+    districts = list(params['districts'].keys())
+    all_rankings = []
+    all_district_assignments = []
+    all_chunks = []
+    rng = np.random.default_rng(seed=np.random.randint(0, 2**32))
+
+    for district in districts:
+        n_students = int(
+            match_stats_df[
+                match_stats_df['Residential District'] == district
+            ]['Total Applicants'].iloc[0]
+        )
+        sigma_d = params['districts'][district]['central_ranking']
+        schools_list = params['districts'][district]['schools']
+        school_to_idx = {s: i for i, s in enumerate(schools_list)}
+        sigma_indices = np.array([school_to_idx[s] for s in sigma_d])
+
+        component_indices = rng.choice(
+            len(params['global_phis']),
+            size=n_students,
+            p=params['global_weights']
+        )
+        for start in range(0, n_students, sampling_chunk_size):
+            chunk = component_indices[start:start + sampling_chunk_size]
+            all_chunks.append(
+                (district, schools_list, sigma_indices, chunk, rng.integers(2**32), list_length_max)
+            )
+        all_district_assignments.extend([district] * n_students)
+
+    results_by_district = {d: [] for d in districts}
+
+    if sampling_n_jobs > 1 and executor is not None:
+        futures = []
+        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+            future = executor.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed)
+            futures.append((district, future))
+        for district, future in futures:
+            results_by_district[district].extend(future.result())
+    elif sampling_n_jobs > 1:
+        with ProcessPoolExecutor(max_workers=sampling_n_jobs) as pool:
+            futures = []
+            for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+                future = pool.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed)
+                futures.append((district, future))
+            for district, future in futures:
+                results_by_district[district].extend(future.result())
+    else:
+        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+            results_by_district[district].extend(
+                _sample_students_chunk(sigma_indices, params['global_phis'], chunk, seed)
+            )
+
+    # Convert to school DBNs — full lists, no truncation
+    for district in districts:
+        schools_list = params['districts'][district]['schools']
+        rankings = results_by_district[district]
+        rankings_as_schools = [[schools_list[idx] for idx in r] for r in rankings]
+        all_rankings.extend(rankings_as_schools)
+
+    return all_rankings, all_district_assignments, rng
+
+def run_matching(
+    all_rankings,
+    all_district_assignments,
+    df,
+    school_info_df,
+    lottery_global,
+    list_length_min,
+    list_length_mean,
+    list_length_std,
+    list_length_max,
+    rng,
+    priority_config=None,
+    district_to_region=None,
+    district_to_borough=None,
+    per_school_lottery=False,
+    student_attrs=None
+):
+    """
+    Given pre-sampled full rankings, applies list length truncation and runs DA.
+    Isolates the matching step so the same preference profile can be reused
+    across multiple list_length_min values.
+    """
+    from list_length import sample_truncated_normal_lengths
+
+    all_schools = df['School DBN'].unique()
+    school_to_idx = {s: i for i, s in enumerate(all_schools)}
+    capacities_dict = school_info_df.set_index('School DBN')['Capacity'].to_dict()
+    capacities = np.array([capacities_dict.get(s, 0) for s in all_schools])
+    dbn_to_progs = {s: [s] for s in all_schools}
+    n_students = len(all_rankings)
+    n_schools = len(all_schools)
+
+    # Group rankings by district to apply per-district list length sampling
+    district_list = list(dict.fromkeys(all_district_assignments))  # preserve order
+    district_indices = {}
+    for i, d in enumerate(all_district_assignments):
+        district_indices.setdefault(d, []).append(i)
+
+    truncated_rankings = [None] * n_students
+    all_list_lengths = [None] * n_students
+
+    for district, indices in district_indices.items():
+        n_d = len(indices)
+        schools_list = [s for r in [all_rankings[i] for i in indices] for s in r]
+        max_schools = max(len(all_rankings[i]) for i in indices)
+        max_len_here = min(list_length_max, max_schools)
+        effective_min = min(list_length_min, max_len_here)
+
+        list_lengths = sample_truncated_normal_lengths(
+            n_students=n_d,
+            mean=list_length_mean,
+            std=list_length_std,
+            min_len=effective_min,
+            max_len=max_len_here,
+            rng=rng,
+        )
+        for j, (idx, L) in enumerate(zip(indices, list_lengths)):
+            truncated_rankings[idx] = all_rankings[idx][:L]
+            all_list_lengths[idx] = L
+
+    def expand_ranking(ranking):
+        seen = set()
+        expanded = []
+        for dbn in ranking:
+            if dbn in seen or dbn not in school_to_idx:
+                continue
+            seen.add(dbn)
+            expanded.append(school_to_idx[dbn])
+        return np.array(expanded, dtype=np.int32)
+
+    rankings_as_indices = [expand_ranking(r) for r in truncated_rankings]
+
+    if per_school_lottery:
+        school_lotteries = rng.random((n_schools, n_students))
+    else:
+        lottery_1d = np.argsort(lottery_global[:n_students]).astype(np.float64) / n_students
+        school_lotteries = np.tile(lottery_1d, (n_schools, 1))
+
+    if priority_config is not None and student_attrs is not None:
+        _d2r = district_to_region or {str(d): str(d) for d in set(all_district_assignments)}
+        school_lotteries = build_composite_rank_matrix(
+            all_schools, student_attrs, priority_config,
+            school_lotteries, _d2r, all_district_assignments,
+        )
+
+    matches_idx = gale_shapley_per_school_numba_wrapper(rankings_as_indices, school_lotteries, capacities)
+    matches_schools = np.array([all_schools[m] if m >= 0 else '-1' for m in matches_idx])
+
+    agg = compute_aggregates(
+        truncated_rankings,
+        matches_schools,
+        np.array(all_district_assignments),
+        all_schools,
+    )
+
+    return agg, truncated_rankings, rankings_as_indices, matches_idx, student_attrs
 
 def run_single_simulation(
     params,
@@ -18,7 +190,7 @@ def run_single_simulation(
     school_info_df,
     lottery_global=None,
     k_ranking_length=10,
-    list_length_mode="fixed",   # "fixed" ou "gaussian"
+    list_length_mode="fixed",  
     list_length_mean=10,
     list_length_std=2,
     list_length_min=1,
@@ -209,7 +381,7 @@ def run_single_simulation(
     if per_school_lottery:
         school_lotteries = rng.random((n_schools, n_students))
     else:
-        lottery_1d = np.argsort(lottery_global).astype(np.float64) / n_students
+        lottery_1d = np.argsort(lottery_global[:n_students]).astype(np.float64) / n_students
         school_lotteries = np.tile(lottery_1d, (n_schools, 1))
 
     if priority_config is not None and student_attrs is not None:

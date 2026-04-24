@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --job-name=eduranker_main_real                             
-#SBATCH --nodes=1                    
-#SBATCH --cpus-per-task=64           
-#SBATCH --mem=8GB                     
+#SBATCH --job-name=eduranker_main_real_nyc_sim                             
+#SBATCH --nodes=64                    
+#SBATCH --cpus-per-task=8           
+#SBATCH --mem=16GB                     
 #SBATCH --time=40:10:00             
 #SBATCH --account=torch_pr_594_tandon_priority
 #SBATCH --output=/scratch/rm6609/EduRanker/MatchingInferenceEngine/experiment-results/mass-sim-logs/job_%A_%a.log
@@ -12,9 +12,9 @@
 
 SEED=40
 K=6
-M=10
-MAX_ITER=10
-MAX_ITER_OPT=10
+M=15
+MAX_ITER=20
+MAX_ITER_OPT=15
 N_JOBS=64
 PROFILE_TIMING=1
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
@@ -35,9 +35,9 @@ OVERLAY="/scratch/rm6609/research/overlay-persistent-manual.ext3"
 singularity exec --fakeroot --overlay "$OVERLAY:ro" \
 /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
 /bin/bash -c "
-    source /ext3/env.sh
+    source /ext3/miniconda3/bin/activate research
     cd /scratch/rm6609/EduRanker/MatchingInferenceEngine
-    python3 src/real_experiment_driver.py --seed $SEED --K $K --M $M --max_iter $MAX_ITER --max_iter_opt $MAX_ITER_OPT --n_jobs $N_JOBS $PROFILE_ARG
+    python3 src/nyc_experiment_driver.py --seed $SEED --K $K --M $M --max_iter $MAX_ITER --max_iter_opt $MAX_ITER_OPT --n_jobs $N_JOBS $PROFILE_ARG
 "
 
 echo "Job End: $(date '+%Y-%m-%d_%H-%M-%S')"

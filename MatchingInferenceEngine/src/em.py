@@ -17,8 +17,8 @@ def sample_rankings(
     match_stats_df,
     sampling_n_jobs=32,
     sampling_chunk_size=2000,
+    list_length_max=10,
     executor=None,
-    list_length_max=10
 ):
     """
     Sample Mallows preference rankings for all students across all districts.
@@ -58,23 +58,23 @@ def sample_rankings(
 
     if sampling_n_jobs > 1 and executor is not None:
         futures = []
-        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
-            future = executor.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed)
+        for district, schools_list, sigma_indices, chunk, seed, list_length_max in all_chunks:
+            future = executor.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed, list_length_max)
             futures.append((district, future))
         for district, future in futures:
             results_by_district[district].extend(future.result())
     elif sampling_n_jobs > 1:
         with ProcessPoolExecutor(max_workers=sampling_n_jobs) as pool:
             futures = []
-            for district, schools_list, sigma_indices, chunk, seed in all_chunks:
-                future = pool.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed)
+            for district, schools_list, sigma_indices, chunk, seed, list_length_max in all_chunks:
+                future = pool.submit(_sample_students_chunk, sigma_indices, params['global_phis'], chunk, seed, list_length_max)
                 futures.append((district, future))
             for district, future in futures:
                 results_by_district[district].extend(future.result())
     else:
-        for district, schools_list, sigma_indices, chunk, seed in all_chunks:
+        for district, schools_list, sigma_indices, chunk, seed, list_length_max in all_chunks:
             results_by_district[district].extend(
-                _sample_students_chunk(sigma_indices, params['global_phis'], chunk, seed)
+                _sample_students_chunk(sigma_indices, params['global_phis'], chunk, seed, list_length_max)
             )
 
     # Convert to school DBNs — full lists, no truncation

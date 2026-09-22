@@ -6,8 +6,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from em import run_single_simulation
-from data_ingestion import read_data, preprocess_data
+from data_ingestion import read_data, nyc_preprocess_data
 from priority_attributes import sample_student_attributes
 from welfare import evaluate_simulation_output
 from em import sample_rankings, run_matching
@@ -127,7 +126,8 @@ def main():
     df_raw = read_data(args.df_filepath)
     match_stats_df = read_data(
         f"{RAW_DATA_DIR}/DATA3_fall-2024-high-school-offer-results-website-1.xlsx",
-        sheet='Match to Choice-District'
+        sheet='Match to Choice-District',
+        is_first_row_header=True
     )
     school_info_df = read_data(
         f"{RAW_DATA_DIR}/DATA4_fall-2025---hs-directory-data.xlsx",
@@ -137,7 +137,7 @@ def main():
         f"{RAW_DATA_DIR}/DATA2_fall-2024-admissions_part-ii_suppressed.xlsx",
         sheet='School'
     )
-    df, match_stats_df, school_info_df, district_to_borough = preprocess_data(
+    df, match_stats_df, school_info_df, district_to_borough = nyc_preprocess_data(
         df_raw, match_stats_df, school_info_df, addtl_school_info_df
     )
     print(f"  Schools: {df['School DBN'].nunique()}, Students: {int(match_stats_df['Total Applicants'].sum())}")
